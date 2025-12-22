@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && git diff --quiet && git diff --cached --quiet || echo '[REMINDER] Uncommitted changes detected'"
+          }
+        ]
+      }
+    ]
+  }
+}

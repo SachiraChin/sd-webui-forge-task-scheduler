@@ -1,0 +1,204 @@
+/* Task Scheduler Extension Styles */
+
+/* Task List Container */
+.task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+/* Individual Task Item */
+.task-item {
+    display: flex;
+    align-items: center;
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--block-background-fill);
+    border: 1px solid var(--border-color-primary);
+    transition: all 0.2s ease;
+}
+
+.task-item:hover {
+    background: var(--block-background-fill-hover, var(--block-background-fill));
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+/* Status-based styling */
+.task-item.status-running {
+    border-left: 4px solid #4CAF50;
+    background: linear-gradient(90deg, rgba(76, 175, 80, 0.1) 0%, transparent 20%);
+}
+
+.task-item.status-pending {
+    border-left: 4px solid #2196F3;
+}
+
+.task-item.status-completed {
+    border-left: 4px solid #8BC34A;
+    opacity: 0.7;
+}
+
+.task-item.status-failed {
+    border-left: 4px solid #f44336;
+    background: linear-gradient(90deg, rgba(244, 67, 54, 0.1) 0%, transparent 20%);
+}
+
+.task-item.status-cancelled {
+    border-left: 4px solid #9E9E9E;
+    opacity: 0.5;
+}
+
+/* Task Index Number */
+.task-index {
+    font-weight: bold;
+    font-size: 1.1em;
+    min-width: 35px;
+    text-align: center;
+    color: var(--body-text-color-subdued);
+}
+
+/* Task Info Section */
+.task-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0 15px;
+    overflow: hidden;
+}
+
+.task-type {
+    font-size: 0.75em;
+    font-weight: 600;
+    color: var(--body-text-color-subdued);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.task-prompt {
+    font-size: 0.95em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.task-checkpoint {
+    font-size: 0.8em;
+    color: var(--body-text-color-subdued);
+    font-style: italic;
+}
+
+/* Task Status Badge */
+.task-status {
+    min-width: 100px;
+    text-align: center;
+    font-size: 0.85em;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: var(--neutral-200);
+}
+
+/* Task Action Buttons */
+.task-actions {
+    display: flex;
+    gap: 5px;
+}
+
+.task-actions button {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 1.2em;
+    padding: 5px 8px;
+    border-radius: 4px;
+    transition: background 0.2s ease;
+}
+
+.task-actions button:hover {
+    background: var(--neutral-300);
+}
+
+/* Empty State */
+.task-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--body-text-color-subdued);
+    font-size: 1.1em;
+}
+
+/* Queue Status Bar */
+.queue-status {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 12px 15px;
+    background: var(--block-background-fill);
+    border-radius: 8px;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+}
+
+/* Status Indicator Dot */
+.status-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.status-indicator.active {
+    background: #4CAF50;
+    box-shadow: 0 0 8px rgba(76, 175, 80, 0.5);
+    animation: pulse 1.5s infinite;
+}
+
+.status-indicator.inactive {
+    background: #9E9E9E;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; box-shadow: 0 0 8px rgba(76, 175, 80, 0.5); }
+    50% { opacity: 0.6; box-shadow: 0 0 15px rgba(76, 175, 80, 0.3); }
+    100% { opacity: 1; box-shadow: 0 0 8px rgba(76, 175, 80, 0.5); }
+}
+
+/* Queue Button Styling */
+#txt2img_queue,
+#img2img_queue {
+    min-width: 90px !important;
+    margin-left: 8px !important;
+}
+
+/* Control Buttons Row */
+#task_queue_tab .gr-button-row {
+    margin-bottom: 15px;
+}
+
+/* Tab Title */
+#task_queue_tab h2 {
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color-primary);
+}
+
+/* Notification Toast */
+.task-scheduler-notification {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.task-scheduler-notification.success {
+    background: #4CAF50 !important;
+}
+
+.task-scheduler-notification.error {
+    background: #f44336 !important;
+}
+
+.task-scheduler-notification.info {
+    background: #2196F3 !important;
+}
