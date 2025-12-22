@@ -5,11 +5,33 @@ Handles background processing with proper thread safety for Forge.
 import threading
 import time
 import traceback
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
 from contextlib import closing
 
 from .models import Task, TaskStatus, TaskType
 from .queue_manager import get_queue_manager, QueueManager
+
+
+def get_default_script_args(script_runner) -> list[Any]:
+    """
+    Get default script args for all scripts from the script runner.
+
+    This extracts default values from the UI components that were created
+    during Gradio setup. Each alwayson script expects its arguments at
+    specific positions in the script_args list.
+    """
+    if not hasattr(script_runner, 'inputs') or not script_runner.inputs:
+        return []
+
+    defaults = []
+    for comp in script_runner.inputs:
+        # Get the default/current value from the Gradio component
+        if hasattr(comp, 'value'):
+            defaults.append(comp.value)
+        else:
+            defaults.append(None)
+
+    return defaults
 
 
 class TaskExecutor:
@@ -226,27 +248,21 @@ class TaskExecutor:
         if "subseed_strength" in params:
             p.subseed_strength = params["subseed_strength"]
 
-        # Set scripts - only if we have valid script_args
+        # Set scripts
         p.scripts = scripts.scripts_txt2img
 
-        # script_args must have at least the script index (0 = no script)
-        # If we don't have proper script_args, just use process_images directly
+        # Get script_args - use task's args if available, otherwise get defaults
+        # from the script runner's UI components to satisfy alwayson scripts
         script_args = task.script_args if task.script_args else []
+        if not script_args:
+            script_args = get_default_script_args(scripts.scripts_txt2img)
 
         # Execute via main thread for GPU safety
         def run_generation():
             with closing(p):
-                # Only call scripts.run if we have valid script_args with at least script index
-                if script_args and len(script_args) > 0:
-                    p.script_args = script_args
-                    processed = scripts.scripts_txt2img.run(p, *script_args)
-                    if processed is None:
-                        processed = process_images(p)
-                else:
-                    # No script selected, run directly
-                    # Must be a list/tuple for slicing to work in postprocess hooks
-                    p.script_args = []
-                    processed = process_images(p)
+                # Set script_args with defaults so alwayson scripts work properly
+                p.script_args = script_args
+                processed = process_images(p)
                 return processed
 
         processed = main_thread.run_and_wait_result(run_generation)
@@ -338,27 +354,21 @@ class TaskExecutor:
         if "subseed_strength" in params:
             p.subseed_strength = params["subseed_strength"]
 
-        # Set scripts - only if we have valid script_args
+        # Set scripts
         p.scripts = scripts.scripts_img2img
 
-        # script_args must have at least the script index (0 = no script)
-        # If we don't have proper script_args, just use process_images directly
+        # Get script_args - use task's args if available, otherwise get defaults
+        # from the script runner's UI components to satisfy alwayson scripts
         script_args = task.script_args if task.script_args else []
+        if not script_args:
+            script_args = get_default_script_args(scripts.scripts_img2img)
 
         # Execute via main thread for GPU safety
         def run_generation():
             with closing(p):
-                # Only call scripts.run if we have valid script_args with at least script index
-                if script_args and len(script_args) > 0:
-                    p.script_args = script_args
-                    processed = scripts.scripts_img2img.run(p, *script_args)
-                    if processed is None:
-                        processed = process_images(p)
-                else:
-                    # No script selected, run directly
-                    # Must be a list/tuple for slicing to work in postprocess hooks
-                    p.script_args = []
-                    processed = process_images(p)
+                # Set script_args with defaults so alwayson scripts work properly
+                p.script_args = script_args
+                processed = process_images(p)
                 return processed
 
         processed = main_thread.run_and_wait_result(run_generation)
