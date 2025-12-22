@@ -354,6 +354,15 @@
                 try { params = JSON.parse(params); } catch(e) { params = {}; }
             }
 
+            // Parse result_images if it's a JSON string
+            let resultImages = task.result_images;
+            if (typeof resultImages === 'string') {
+                try { resultImages = JSON.parse(resultImages); } catch(e) { resultImages = []; }
+            }
+            if (!Array.isArray(resultImages)) {
+                resultImages = [];
+            }
+
             // Create modal
             const modal = document.createElement('div');
             modal.className = 'task-details-modal';
@@ -399,11 +408,11 @@
                             <pre class="task-error-text">${task.error}</pre>
                         </div>
                         ` : ''}
-                        ${task.result_images && task.result_images.length > 0 ? `
+                        ${resultImages && resultImages.length > 0 ? `
                         <div class="task-details-section">
                             <h4>Results</h4>
                             <div class="task-results-list">
-                                ${task.result_images.map(img => `<div class="task-result-path">${img}</div>`).join('')}
+                                ${resultImages.map(img => `<div class="task-result-path">${img}</div>`).join('')}
                             </div>
                         </div>
                         ` : ''}
