@@ -28,13 +28,15 @@
             return true;
         }
 
-        // Create Queue button
+        // Create Queue button - copy styling from Generate button
         const queueBtn = document.createElement('button');
         queueBtn.id = `${tabName}_queue`;
-        queueBtn.className = 'lg secondary gradio-button';
+        // Copy the exact classes from the Generate button for consistent styling
+        queueBtn.className = generateBtn.className.replace('primary', 'secondary');
         queueBtn.textContent = 'Queue';
         queueBtn.title = 'Add current settings to task queue';
         queueBtn.style.marginLeft = '8px';
+        queueBtn.style.minWidth = '80px';
 
         // Insert after Generate button
         generateBtn.parentNode.insertBefore(queueBtn, generateBtn.nextSibling);
@@ -42,6 +44,7 @@
         // Add click handler
         queueBtn.addEventListener('click', function(e) {
             e.preventDefault();
+            e.stopPropagation();
             queueTask(tabName);
         });
 
@@ -53,6 +56,7 @@
     function queueTask(tabName) {
         // Show feedback immediately
         const queueBtn = document.getElementById(`${tabName}_queue`);
+        const originalText = queueBtn ? queueBtn.textContent : 'Queue';
         if (queueBtn) {
             queueBtn.textContent = 'Queuing...';
             queueBtn.disabled = true;
@@ -73,65 +77,82 @@
         .then(data => {
             if (data.success) {
                 showNotification('Task queued successfully!', 'success');
-                refreshTaskList();
+                // Try to refresh task list if on queue tab
+                triggerRefresh();
             } else {
-                showNotification('Failed to queue task: ' + data.error, 'error');
+                showNotification('Failed to queue task: ' + (data.error || 'Unknown error'), 'error');
             }
         })
         .catch(error => {
             console.error('[TaskScheduler] Error queuing task:', error);
-            // Fallback: try using Gradio's internal mechanism
-            queueTaskViaGradio(tabName);
+            showNotification('Error queuing task. Check console for details.', 'error');
         })
         .finally(() => {
             if (queueBtn) {
-                queueBtn.textContent = 'Queue';
+                queueBtn.textContent = originalText;
                 queueBtn.disabled = false;
             }
         });
     }
 
-    // Fallback: Queue task via Gradio button click simulation
-    function queueTaskViaGradio(tabName) {
-        // Find the hidden queue trigger if it exists
-        const hiddenTrigger = document.getElementById(`${tabName}_queue_trigger`);
-        if (hiddenTrigger) {
-            hiddenTrigger.click();
-        } else {
-            showNotification('Task queued! Check the Task Queue tab.', 'info');
-        }
-    }
-
     // Collect all parameters from the UI
     function collectParams(tabName) {
-        const params = {};
+        const params = { extra_params: {} };
 
         // Get prompt
         const promptEl = document.querySelector(`#${tabName}_prompt textarea`);
-        if (promptEl) params.prompt = promptEl.value;
+        if (promptEl) params.prompt = promptEl.value || '';
 
         // Get negative prompt
         const negPromptEl = document.querySelector(`#${tabName}_neg_prompt textarea`);
-        if (negPromptEl) params.negative_prompt = negPromptEl.value;
+        if (negPromptEl) params.negative_prompt = negPromptEl.value || '';
 
-        // Get other common parameters
-        const paramMappings = {
-            'steps': 'steps',
-            'cfg_scale': 'cfg_scale',
-            'width': 'width',
-            'height': 'height',
-            'batch_size': 'batch_size',
-            'batch_count': 'n_iter',
-            'seed': 'seed',
-            'sampler': 'sampler_name',
-        };
+        // Get steps - try multiple selectors
+        let stepsEl = document.querySelector(`#${tabName}_steps input[type="number"]`);
+        if (!stepsEl) stepsEl = document.querySelector(`#${tabName}_steps input`);
+        if (stepsEl) params.steps = parseInt(stepsEl.value) || 20;
 
-        // Try to get each parameter
-        for (const [uiName, paramName] of Object.entries(paramMappings)) {
-            const el = document.querySelector(`#${tabName}_${uiName} input`);
-            if (el) {
-                params[paramName] = el.value;
-            }
+        // Get CFG scale
+        let cfgEl = document.querySelector(`#${tabName}_cfg_scale input[type="number"]`);
+        if (!cfgEl) cfgEl = document.querySelector(`#${tabName}_cfg_scale input`);
+        if (cfgEl) params.cfg_scale = parseFloat(cfgEl.value) || 7.0;
+
+        // Get dimensions
+        let widthEl = document.querySelector(`#${tabName}_width input[type="number"]`);
+        if (!widthEl) widthEl = document.querySelector(`#${tabName}_width input`);
+        if (widthEl) params.width = parseInt(widthEl.value) || 512;
+
+        let heightEl = document.querySelector(`#${tabName}_height input[type="number"]`);
+        if (!heightEl) heightEl = document.querySelector(`#${tabName}_height input`);
+        if (heightEl) params.height = parseInt(heightEl.value) || 512;
+
+        // Get batch size
+        let batchSizeEl = document.querySelector(`#${tabName}_batch_size input[type="number"]`);
+        if (!batchSizeEl) batchSizeEl = document.querySelector(`#${tabName}_batch_size input`);
+        if (batchSizeEl) params.batch_size = parseInt(batchSizeEl.value) || 1;
+
+        // Get batch count (n_iter)
+        let batchCountEl = document.querySelector(`#${tabName}_batch_count input[type="number"]`);
+        if (!batchCountEl) batchCountEl = document.querySelector(`#${tabName}_batch_count input`);
+        if (batchCountEl) params.n_iter = parseInt(batchCountEl.value) || 1;
+
+        // Get seed
+        let seedEl = document.querySelector(`#${tabName}_seed input[type="number"]`);
+        if (!seedEl) seedEl = document.querySelector(`#${tabName}_seed input`);
+        if (seedEl) params.seed = parseInt(seedEl.value) || -1;
+
+        // Get sampler - look for dropdown
+        const samplerEl = document.querySelector(`#${tabName}_sampling select, #${tabName}_sampler select`);
+        if (samplerEl) params.sampler_name = samplerEl.value || 'Euler';
+
+        // Get scheduler
+        const schedulerEl = document.querySelector(`#${tabName}_scheduler select`);
+        if (schedulerEl) params.scheduler = schedulerEl.value || 'automatic';
+
+        // For img2img, get denoising strength
+        if (tabName === 'img2img') {
+            let denoisingEl = document.querySelector(`#${tabName}_denoising_strength input`);
+            if (denoisingEl) params.extra_params.denoising_strength = parseFloat(denoisingEl.value) || 0.75;
         }
 
         return params;
@@ -139,13 +160,9 @@
 
     // Show notification toast
     function showNotification(message, type) {
-        // Use Gradio's built-in notification if available
-        if (typeof gradio_config !== 'undefined' && gradio_config.show_toast) {
-            gradio_config.show_toast(message);
-            return;
-        }
+        // Remove any existing notifications
+        document.querySelectorAll('.task-scheduler-notification').forEach(el => el.remove());
 
-        // Fallback: create custom notification
         const notification = document.createElement('div');
         notification.className = `task-scheduler-notification ${type}`;
         notification.textContent = message;
@@ -156,65 +173,145 @@
             padding: 15px 25px;
             border-radius: 8px;
             z-index: 10000;
-            animation: slideIn 0.3s ease;
+            animation: taskSchedulerSlideIn 0.3s ease;
             background: ${type === 'success' ? '#4CAF50' : type === 'error' ? '#f44336' : '#2196F3'};
             color: white;
+            font-weight: 500;
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         `;
 
         document.body.appendChild(notification);
 
         setTimeout(() => {
-            notification.style.animation = 'slideOut 0.3s ease';
+            notification.style.animation = 'taskSchedulerSlideOut 0.3s ease';
             setTimeout(() => notification.remove(), 300);
         }, 3000);
     }
 
-    // Refresh the task list in the Task Queue tab
-    function refreshTaskList() {
-        const refreshBtn = document.querySelector('#task_queue_tab button:contains("Refresh")');
-        if (refreshBtn) {
-            refreshBtn.click();
+    // Trigger refresh of the task list
+    function triggerRefresh() {
+        // Find refresh button in task queue tab and click it
+        const buttons = document.querySelectorAll('#task_queue_tab button');
+        for (const btn of buttons) {
+            if (btn.textContent.includes('Refresh') || btn.textContent.includes('🔄')) {
+                btn.click();
+                break;
+            }
         }
     }
 
-    // Handle task actions (delete, etc.)
+    // Handle task actions (delete, etc.) via API
     window.taskSchedulerAction = function(action, taskId) {
         if (action === 'delete') {
             if (confirm('Delete this task?')) {
-                const taskIdInput = document.getElementById('task_action_id');
-                if (taskIdInput) {
-                    // Trigger Gradio update
-                    taskIdInput.value = taskId;
-                    taskIdInput.dispatchEvent(new Event('input', { bubbles: true }));
-                }
+                fetch(`/task-scheduler/queue/${taskId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showNotification('Task deleted', 'success');
+                        triggerRefresh();
+                    } else {
+                        showNotification('Failed to delete task: ' + (data.error || 'Unknown error'), 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('[TaskScheduler] Error deleting task:', error);
+                    showNotification('Error deleting task', 'error');
+                });
             }
+        } else if (action === 'retry') {
+            fetch(`/task-scheduler/queue/${taskId}/retry`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('Task requeued', 'success');
+                    triggerRefresh();
+                } else {
+                    showNotification('Failed to retry task', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('[TaskScheduler] Error retrying task:', error);
+                showNotification('Error retrying task', 'error');
+            });
         }
     };
 
     // Auto-refresh task list when queue tab is visible
     let refreshInterval = null;
+    let lastTabWasQueue = false;
 
     function startAutoRefresh() {
         if (refreshInterval) return;
 
+        // Set up tab change detection
+        setupTabChangeDetection();
+
         refreshInterval = setInterval(() => {
-            const taskQueueTab = document.getElementById('task_queue_tab');
-            if (taskQueueTab && taskQueueTab.offsetParent !== null) {
-                // Tab is visible, refresh
-                const refreshBtn = document.querySelector('#task_queue_tab [id*="refresh"]');
-                if (refreshBtn) {
-                    refreshBtn.click();
-                }
+            // Check if task queue tab is visible
+            const isQueueTabVisible = isTaskQueueTabVisible();
+            if (isQueueTabVisible) {
+                triggerRefresh();
             }
-        }, 5000); // Refresh every 5 seconds
+        }, 5000); // Refresh every 5 seconds when visible
     }
 
-    function stopAutoRefresh() {
-        if (refreshInterval) {
-            clearInterval(refreshInterval);
-            refreshInterval = null;
+    function isTaskQueueTabVisible() {
+        const taskQueueTab = document.getElementById('task_queue_tab');
+        if (!taskQueueTab) return false;
+
+        // Check if this tab is currently active/visible
+        const tabButton = document.querySelector('button[role="tab"][aria-selected="true"]');
+        if (tabButton && tabButton.textContent.includes('Task Queue')) {
+            return true;
         }
+
+        // Fallback: check if element is visible
+        return taskQueueTab.offsetParent !== null && taskQueueTab.offsetHeight > 0;
+    }
+
+    function setupTabChangeDetection() {
+        // Monitor for tab changes using MutationObserver
+        const tabsContainer = document.querySelector('.tabs, [role="tablist"]');
+        if (!tabsContainer) {
+            // Retry later if tabs not found yet
+            setTimeout(setupTabChangeDetection, 1000);
+            return;
+        }
+
+        // Watch for aria-selected changes on tab buttons
+        const observer = new MutationObserver((mutations) => {
+            const isQueueTabNow = isTaskQueueTabVisible();
+            if (isQueueTabNow && !lastTabWasQueue) {
+                // Just switched to queue tab - refresh immediately
+                console.log('[TaskScheduler] Switched to Task Queue tab, refreshing...');
+                triggerRefresh();
+            }
+            lastTabWasQueue = isQueueTabNow;
+        });
+
+        observer.observe(tabsContainer, {
+            attributes: true,
+            subtree: true,
+            attributeFilter: ['aria-selected']
+        });
+
+        // Also add click handlers to tab buttons as backup
+        document.querySelectorAll('button[role="tab"]').forEach(tab => {
+            tab.addEventListener('click', () => {
+                setTimeout(() => {
+                    if (isTaskQueueTabVisible() && !lastTabWasQueue) {
+                        console.log('[TaskScheduler] Tab clicked, refreshing...');
+                        triggerRefresh();
+                    }
+                    lastTabWasQueue = isTaskQueueTabVisible();
+                }, 100);
+            });
+        });
     }
 
     // Initialize when page loads
@@ -223,7 +320,7 @@
 
         // Try to inject buttons (may need retry due to Gradio loading)
         let attempts = 0;
-        const maxAttempts = 30;
+        const maxAttempts = 60; // 30 seconds total
 
         function tryInject() {
             attempts++;
@@ -237,6 +334,8 @@
                 setTimeout(tryInject, 500);
             } else {
                 console.log('[TaskScheduler] Some buttons could not be injected after max attempts');
+                // Still start auto-refresh for the queue tab
+                startAutoRefresh();
             }
         }
 
@@ -245,16 +344,16 @@
         // Add CSS animations
         const style = document.createElement('style');
         style.textContent = `
-            @keyframes slideIn {
+            @keyframes taskSchedulerSlideIn {
                 from { transform: translateX(100%); opacity: 0; }
                 to { transform: translateX(0); opacity: 1; }
             }
-            @keyframes slideOut {
+            @keyframes taskSchedulerSlideOut {
                 from { transform: translateX(0); opacity: 1; }
                 to { transform: translateX(100%); opacity: 0; }
             }
             #txt2img_queue, #img2img_queue {
-                min-width: 80px;
+                min-width: 80px !important;
             }
         `;
         document.head.appendChild(style);

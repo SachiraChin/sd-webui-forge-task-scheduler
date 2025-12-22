@@ -226,15 +226,25 @@ class TaskExecutor:
         if "subseed_strength" in params:
             p.subseed_strength = params["subseed_strength"]
 
-        # Set scripts
+        # Set scripts - only if we have valid script_args
         p.scripts = scripts.scripts_txt2img
-        p.script_args = task.script_args
+
+        # script_args must have at least the script index (0 = no script)
+        # If we don't have proper script_args, just use process_images directly
+        script_args = task.script_args if task.script_args else []
 
         # Execute via main thread for GPU safety
         def run_generation():
             with closing(p):
-                processed = scripts.scripts_txt2img.run(p, *p.script_args)
-                if processed is None:
+                # Only call scripts.run if we have valid script_args with at least script index
+                if script_args and len(script_args) > 0:
+                    p.script_args = script_args
+                    processed = scripts.scripts_txt2img.run(p, *script_args)
+                    if processed is None:
+                        processed = process_images(p)
+                else:
+                    # No script selected, run directly
+                    p.script_args = {}
                     processed = process_images(p)
                 return processed
 
@@ -327,15 +337,25 @@ class TaskExecutor:
         if "subseed_strength" in params:
             p.subseed_strength = params["subseed_strength"]
 
-        # Set scripts
+        # Set scripts - only if we have valid script_args
         p.scripts = scripts.scripts_img2img
-        p.script_args = task.script_args
+
+        # script_args must have at least the script index (0 = no script)
+        # If we don't have proper script_args, just use process_images directly
+        script_args = task.script_args if task.script_args else []
 
         # Execute via main thread for GPU safety
         def run_generation():
             with closing(p):
-                processed = scripts.scripts_img2img.run(p, *p.script_args)
-                if processed is None:
+                # Only call scripts.run if we have valid script_args with at least script index
+                if script_args and len(script_args) > 0:
+                    p.script_args = script_args
+                    processed = scripts.scripts_img2img.run(p, *script_args)
+                    if processed is None:
+                        processed = process_images(p)
+                else:
+                    # No script selected, run directly
+                    p.script_args = {}
                     processed = process_images(p)
                 return processed
 
