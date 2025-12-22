@@ -190,14 +190,24 @@
 
     // Trigger refresh of the task list
     function triggerRefresh() {
-        // Find refresh button in task queue tab and click it
-        const buttons = document.querySelectorAll('#task_queue_tab button');
-        for (const btn of buttons) {
-            if (btn.textContent.includes('Refresh') || btn.textContent.includes('🔄')) {
-                btn.click();
-                break;
+        // Find refresh button - try multiple selectors since Gradio structures tabs differently
+        const selectors = [
+            '#task_queue_tab button',
+            '[id*="task_queue"] button',
+            '.tabitem button'
+        ];
+
+        for (const selector of selectors) {
+            const buttons = document.querySelectorAll(selector);
+            for (const btn of buttons) {
+                if (btn.textContent.includes('Refresh') || btn.textContent.includes('🔄')) {
+                    console.log('[TaskScheduler] Clicking refresh button');
+                    btn.click();
+                    return;
+                }
             }
         }
+        console.log('[TaskScheduler] Refresh button not found');
     }
 
     // Handle task actions (delete, etc.) via API
@@ -261,27 +271,51 @@
     }
 
     function isTaskQueueTabVisible() {
-        const taskQueueTab = document.getElementById('task_queue_tab');
-        if (!taskQueueTab) return false;
-
-        // Check if this tab is currently active/visible
+        // Method 1: Check if the selected tab button says "Task Queue"
         const tabButton = document.querySelector('button[role="tab"][aria-selected="true"]');
         if (tabButton && tabButton.textContent.includes('Task Queue')) {
             return true;
         }
 
-        // Fallback: check if element is visible
-        return taskQueueTab.offsetParent !== null && taskQueueTab.offsetHeight > 0;
+        // Method 2: Check for the task queue status element visibility
+        const queueStatus = document.getElementById('task_queue_status');
+        if (queueStatus && queueStatus.offsetParent !== null && queueStatus.offsetHeight > 0) {
+            return true;
+        }
+
+        // Method 3: Check for task_queue_tab element
+        const taskQueueTab = document.getElementById('task_queue_tab');
+        if (taskQueueTab && taskQueueTab.offsetParent !== null && taskQueueTab.offsetHeight > 0) {
+            return true;
+        }
+
+        // Method 4: Check for the task list element
+        const taskList = document.getElementById('task_queue_list');
+        if (taskList && taskList.offsetParent !== null && taskList.offsetHeight > 0) {
+            return true;
+        }
+
+        return false;
     }
 
     function setupTabChangeDetection() {
         // Monitor for tab changes using MutationObserver
-        const tabsContainer = document.querySelector('.tabs, [role="tablist"]');
+        // Try multiple selectors since Gradio versions may differ
+        const selectors = ['.tabs', '[role="tablist"]', '.tab-nav', '#tabs'];
+        let tabsContainer = null;
+        for (const sel of selectors) {
+            tabsContainer = document.querySelector(sel);
+            if (tabsContainer) break;
+        }
+
         if (!tabsContainer) {
             // Retry later if tabs not found yet
+            console.log('[TaskScheduler] Tab container not found, retrying...');
             setTimeout(setupTabChangeDetection, 1000);
             return;
         }
+
+        console.log('[TaskScheduler] Tab container found, setting up detection');
 
         // Watch for aria-selected changes on tab buttons
         const observer = new MutationObserver((mutations) => {
@@ -297,21 +331,30 @@
         observer.observe(tabsContainer, {
             attributes: true,
             subtree: true,
-            attributeFilter: ['aria-selected']
+            attributeFilter: ['aria-selected', 'class']
         });
 
         // Also add click handlers to tab buttons as backup
-        document.querySelectorAll('button[role="tab"]').forEach(tab => {
-            tab.addEventListener('click', () => {
-                setTimeout(() => {
-                    if (isTaskQueueTabVisible() && !lastTabWasQueue) {
-                        console.log('[TaskScheduler] Tab clicked, refreshing...');
-                        triggerRefresh();
-                    }
-                    lastTabWasQueue = isTaskQueueTabVisible();
-                }, 100);
+        const addTabClickHandlers = () => {
+            document.querySelectorAll('button[role="tab"], .tab-nav button').forEach(tab => {
+                if (tab.dataset.taskSchedulerHandler) return; // Already handled
+                tab.dataset.taskSchedulerHandler = 'true';
+                tab.addEventListener('click', () => {
+                    setTimeout(() => {
+                        const isQueueTabNow = isTaskQueueTabVisible();
+                        if (isQueueTabNow && !lastTabWasQueue) {
+                            console.log('[TaskScheduler] Tab clicked, refreshing...');
+                            triggerRefresh();
+                        }
+                        lastTabWasQueue = isQueueTabNow;
+                    }, 200);
+                });
             });
-        });
+        };
+
+        addTabClickHandlers();
+        // Re-check for new tab buttons periodically (in case dynamically added)
+        setInterval(addTabClickHandlers, 5000);
     }
 
     // Initialize when page loads

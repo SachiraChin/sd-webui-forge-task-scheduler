@@ -244,7 +244,8 @@ class TaskExecutor:
                         processed = process_images(p)
                 else:
                     # No script selected, run directly
-                    p.script_args = {}
+                    # Must be a list/tuple for slicing to work in postprocess hooks
+                    p.script_args = []
                     processed = process_images(p)
                 return processed
 
@@ -355,7 +356,8 @@ class TaskExecutor:
                         processed = process_images(p)
                 else:
                     # No script selected, run directly
-                    p.script_args = {}
+                    # Must be a list/tuple for slicing to work in postprocess hooks
+                    p.script_args = []
                     processed = process_images(p)
                 return processed
 

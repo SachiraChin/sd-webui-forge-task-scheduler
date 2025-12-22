@@ -219,7 +219,7 @@ def render_task_list() -> str:
     tasks = queue_manager.get_all_tasks()
 
     if not tasks:
-        return "<div class='task-empty'>No tasks in queue</div>"
+        return "<div class='task-empty'>No tasks in queue. Use the Queue button next to Generate to add tasks.</div>"
 
     html_parts = ["<div class='task-list'>"]
 
@@ -227,7 +227,7 @@ def render_task_list() -> str:
         status_class = f"status-{task.status.value}"
         status_icon = {
             TaskStatus.PENDING: "⏳",
-            TaskStatus.RUNNING: "▶️",
+            TaskStatus.RUNNING: "🔄",
             TaskStatus.COMPLETED: "✅",
             TaskStatus.FAILED: "❌",
             TaskStatus.CANCELLED: "🚫"
@@ -238,20 +238,28 @@ def render_task_list() -> str:
         if len(task.params.get("prompt", "")) > 60:
             prompt += "..."
 
+        # Escape HTML in prompt for title attribute
+        prompt_escaped = task.params.get("prompt", "").replace('"', '&quot;').replace("'", "&#39;")
+
         checkpoint_short = task.get_short_checkpoint()
+
+        # Build action buttons based on status
+        actions_html = ""
+        if task.status in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+            actions_html += f'<button class="task-btn task-btn-retry" onclick=\'taskSchedulerAction("retry", "{task.id}")\' title="Retry this task">↻</button>'
+        if task.status != TaskStatus.RUNNING:
+            actions_html += f'<button class="task-btn task-btn-delete" onclick=\'taskSchedulerAction("delete", "{task.id}")\' title="Delete this task">🗑️</button>'
 
         html_parts.append(f"""
         <div class='task-item {status_class}' data-task-id='{task.id}'>
             <div class='task-index'>{i + 1}</div>
             <div class='task-info'>
                 <div class='task-type'>{task.task_type.value}</div>
-                <div class='task-prompt' title='{task.params.get("prompt", "")}'>{prompt}</div>
-                <div class='task-checkpoint'>{checkpoint_short}</div>
+                <div class='task-prompt' title="{prompt_escaped}">{prompt}</div>
+                <div class='task-checkpoint'>Model: {checkpoint_short}</div>
             </div>
-            <div class='task-status'>{status_icon} {task.status.value}</div>
-            <div class='task-actions'>
-                <button onclick='taskSchedulerAction("delete", "{task.id}")'>🗑️</button>
-            </div>
+            <div class='task-status'><span class='status-badge'>{status_icon} {task.status.value}</span></div>
+            <div class='task-actions'>{actions_html}</div>
         </div>
         """)
 
@@ -262,22 +270,53 @@ def render_task_list() -> str:
 def render_queue_status() -> str:
     """Render queue status as HTML."""
     executor = get_executor()
+    queue_manager = get_queue_manager()
     status = executor.get_status()
     stats = status["queue_stats"]
 
-    running_status = "Running" if status["is_running"] else "Stopped"
-    if status["is_paused"]:
-        running_status = "Paused"
+    # Determine status text and color
+    if status["is_running"]:
+        if status["is_paused"]:
+            running_status = "Paused"
+            status_class = "paused"
+        elif stats['pending'] == 0 and stats['running'] == 0:
+            running_status = "Idle (no pending tasks)"
+            status_class = "idle"
+        else:
+            running_status = "Processing"
+            status_class = "active"
+    else:
+        running_status = "Stopped"
+        status_class = "inactive"
 
     current = ""
     if status["current_task"]:
-        current = f" | Current: {status['current_task'].get('name', 'Unknown')}"
+        task_name = status['current_task'].get('name', '')
+        if not task_name:
+            # Try to get from params
+            params = status['current_task'].get('params', {})
+            if isinstance(params, str):
+                import json
+                try:
+                    params = json.loads(params)
+                except:
+                    params = {}
+            prompt = params.get('prompt', 'Unknown')[:30]
+            task_name = f"{prompt}..."
+        current = f"<br><small>Current: {task_name}</small>"
 
     return f"""
-    <div class='queue-status'>
-        <span class='status-indicator {"active" if status["is_running"] else "inactive"}'></span>
-        <span>Queue: {running_status}{current}</span>
-        <span>Pending: {stats['pending']} | Running: {stats['running']} | Completed: {stats['completed']} | Failed: {stats['failed']}</span>
+    <div class='queue-status {status_class}'>
+        <span class='status-indicator {status_class}'></span>
+        <div class='status-text'>
+            <strong>Queue: {running_status}</strong>{current}
+        </div>
+        <div class='status-stats'>
+            <span class='stat pending'>⏳ {stats['pending']} pending</span>
+            <span class='stat running'>🔄 {stats['running']} running</span>
+            <span class='stat completed'>✅ {stats['completed']} completed</span>
+            <span class='stat failed'>❌ {stats['failed']} failed</span>
+        </div>
     </div>
     """
 
@@ -285,6 +324,14 @@ def render_queue_status() -> str:
 def start_queue():
     """Start processing the queue."""
     executor = get_executor()
+    queue_manager = get_queue_manager()
+    stats = queue_manager.get_stats()
+
+    # Check if there are pending tasks
+    if stats['pending'] == 0:
+        # No pending tasks - still start but it will be idle
+        pass
+
     executor.start()
     return render_queue_status(), render_task_list()
 
