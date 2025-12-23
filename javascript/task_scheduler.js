@@ -321,23 +321,71 @@
                         ` : ''}
                         ${task.script_args && task.script_args.length > 0 ? `
                         <div class="task-details-section">
-                            <h4>Captured Arguments (${task.script_args.length} total)</h4>
+                            <h4>Script Arguments (${task.script_args.length} total)</h4>
                             <details class="script-args-expander">
-                                <summary class="script-args-summary">Click to expand all argument values</summary>
+                                <summary class="script-args-summary">Click to expand all script arguments</summary>
                                 <div class="script-args-list">
-                                    ${task.script_args.map((item, idx) => {
-                                        // Show raw JSON for debugging
-                                        let rawJson;
-                                        try {
-                                            rawJson = JSON.stringify(item, null, 2);
-                                            if (rawJson.length > 500) rawJson = rawJson.substring(0, 500) + '...';
-                                        } catch(e) {
-                                            rawJson = '[Cannot serialize]';
-                                        }
-                                        const escapedRaw = rawJson.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                                    ${(() => {
+                                        // Check for labeled format in params._script_args_labeled
+                                        const labeledArgs = params._script_args_labeled;
+                                        const hasLabeledFormat = labeledArgs && Array.isArray(labeledArgs) && labeledArgs.length > 0;
 
-                                        return '<div class="arg-item"><span class="arg-index">[' + idx + ']</span><pre class="arg-raw">' + escapedRaw + '</pre></div>';
-                                    }).join('')}
+                                        if (hasLabeledFormat) {
+                                            // Group by script
+                                            const byScript = {};
+                                            labeledArgs.forEach(arg => {
+                                                const scriptName = arg.script || 'Core';
+                                                if (!byScript[scriptName]) byScript[scriptName] = [];
+                                                byScript[scriptName].push(arg);
+                                            });
+
+                                            return Object.entries(byScript).map(([scriptName, args]) => {
+                                                const argsHtml = args.map(arg => {
+                                                    let valueDisplay = '';
+                                                    const val = arg.value;
+                                                    if (val === null || val === undefined) {
+                                                        valueDisplay = '<span class="arg-null">null</span>';
+                                                    } else if (typeof val === 'boolean') {
+                                                        valueDisplay = '<span class="arg-bool">' + val + '</span>';
+                                                    } else if (typeof val === 'number') {
+                                                        valueDisplay = '<span class="arg-number">' + val + '</span>';
+                                                    } else if (typeof val === 'string' && val.length > 100) {
+                                                        valueDisplay = '<span class="arg-value">' + val.substring(0, 100).replace(/</g, '&lt;') + '...</span>';
+                                                    } else if (typeof val === 'object') {
+                                                        let json = JSON.stringify(val, null, 2);
+                                                        if (json.length > 200) json = json.substring(0, 200) + '...';
+                                                        valueDisplay = '<pre class="arg-json">' + json.replace(/</g, '&lt;') + '</pre>';
+                                                    } else {
+                                                        valueDisplay = '<span class="arg-value">' + String(val).replace(/</g, '&lt;') + '</span>';
+                                                    }
+
+                                                    return '<div class="arg-item">' +
+                                                        '<span class="arg-index">[' + arg.index + ']</span>' +
+                                                        '<span class="arg-name" title="' + (arg.name || '').replace(/"/g, '&quot;') + '">' + (arg.label || arg.name || 'Unknown') + '</span>' +
+                                                        '<span class="arg-value-container">' + valueDisplay + '</span>' +
+                                                        '</div>';
+                                                }).join('');
+
+                                                return '<div class="script-group">' +
+                                                    '<div class="script-group-header">' + scriptName + ' (' + args.length + ' args)</div>' +
+                                                    '<div class="script-group-args">' + argsHtml + '</div>' +
+                                                    '</div>';
+                                            }).join('');
+                                        } else {
+                                            // Raw format - just show raw values
+                                            return task.script_args.map((item, idx) => {
+                                                let rawJson;
+                                                try {
+                                                    rawJson = JSON.stringify(item, null, 2);
+                                                    if (rawJson.length > 500) rawJson = rawJson.substring(0, 500) + '...';
+                                                } catch(e) {
+                                                    rawJson = '[Cannot serialize]';
+                                                }
+                                                const escapedRaw = rawJson.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                                                return '<div class="arg-item"><span class="arg-index">[' + idx + ']</span><pre class="arg-raw">' + escapedRaw + '</pre></div>';
+                                            }).join('');
+                                        }
+                                    })()}
                                 </div>
                             </details>
                         </div>
@@ -732,6 +780,43 @@
                 white-space: pre-wrap;
                 max-height: 100px;
                 overflow-y: auto;
+            }
+            .arg-value-container {
+                flex: 1;
+                min-width: 0;
+            }
+            /* Script groups for labeled args */
+            .script-group {
+                margin-bottom: 12px;
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 6px;
+                overflow: hidden;
+            }
+            .script-group-header {
+                background: rgba(33, 150, 243, 0.15);
+                padding: 8px 12px;
+                font-weight: 600;
+                color: #60a5fa;
+                font-size: 0.9em;
+            }
+            .script-group-args {
+                padding: 4px;
+            }
+            .script-group .arg-item {
+                display: grid;
+                grid-template-columns: 50px 180px 1fr;
+                gap: 8px;
+                padding: 6px 10px;
+                margin: 2px 0;
+                background: rgba(0,0,0,0.1);
+                border-radius: 4px;
+                align-items: start;
+            }
+            .script-group .arg-name {
+                color: #60a5fa;
+                font-weight: 500;
+                word-break: break-word;
+                font-size: 0.9em;
             }
         `;
         document.head.appendChild(style);

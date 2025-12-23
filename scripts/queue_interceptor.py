@@ -272,32 +272,77 @@ class QueueInterceptorScript(scripts.Script):
         # Capture script_args - this includes ALL extension settings!
         # p.script_args contains the full list of all script arguments
         # We need to serialize them properly (some might be Gradio components or complex objects)
-        script_args = []
+        # IMPORTANT: Keep raw script_args immutable for execution, store labeled version separately
+        script_args = []  # Raw values for execution (immutable)
+        script_args_labeled = None  # Labeled version for display only
+
+        # Try to get script args mapping for labels (optional plugin)
+        args_mapping = None
+        try:
+            from script_args_mapper import get_cached_mapping
+            args_mapping = get_cached_mapping()
+            if args_mapping:
+                print(f"[TaskScheduler] Script args mapper available with {len(args_mapping)} mappings")
+                script_args_labeled = []
+        except ImportError:
+            pass  # Mapper not available, that's fine
+        except Exception as e:
+            print(f"[TaskScheduler] Error loading script args mapper: {e}")
+
         if hasattr(p, 'script_args') and p.script_args:
             for i, arg in enumerate(p.script_args):
+                # Serialize the value
+                serialized_value = None
                 try:
-                    # Try to serialize - if it fails, convert to string representation
                     import json
                     json.dumps(arg)
-                    script_args.append(arg)
+                    serialized_value = arg
                 except (TypeError, ValueError):
-                    # Not JSON serializable - try to get value or convert to string
                     if hasattr(arg, 'value'):
-                        script_args.append(arg.value)
+                        serialized_value = arg.value
                     elif arg is None:
-                        script_args.append(None)
+                        serialized_value = None
                     else:
-                        # Last resort: string representation
-                        script_args.append(str(arg))
+                        serialized_value = str(arg)
 
-        print(f"[TaskScheduler] Captured {len(script_args)} script_args")
+                # Always store raw value
+                script_args.append(serialized_value)
 
-        # Create the task
+                # Build labeled entry if mapping available (for display only)
+                if script_args_labeled is not None:
+                    if args_mapping and i in args_mapping:
+                        info = args_mapping[i]
+                        script_args_labeled.append({
+                            "index": i,
+                            "name": info.get("name", f"arg_{i}"),
+                            "label": info.get("label", f"Argument {i}"),
+                            "script": info.get("script"),
+                            "type": info.get("type", "unknown"),
+                            "value": serialized_value
+                        })
+                    else:
+                        script_args_labeled.append({
+                            "index": i,
+                            "name": f"arg_{i}",
+                            "label": f"Argument {i}",
+                            "script": None,
+                            "type": "unknown",
+                            "value": serialized_value
+                        })
+
+        print(f"[TaskScheduler] Captured {len(script_args)} script_args (raw format)")
+
+        # Store labeled version in params for display (if available)
+        if script_args_labeled:
+            params["_script_args_labeled"] = script_args_labeled
+            print(f"[TaskScheduler] Stored labeled script_args for display")
+
+        # Create the task - script_args stays raw for execution
         task = queue_manager.add_task(
             task_type=task_type,
             params=params,
             checkpoint=checkpoint,
-            script_args=script_args,
+            script_args=script_args,  # Raw values only!
             name=""  # Will auto-generate from prompt
         )
 

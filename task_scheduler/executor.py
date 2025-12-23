@@ -275,6 +275,7 @@ class TaskExecutor:
 
         # Get script_args - use task's args if available, otherwise get defaults
         # from the script runner's UI components to satisfy alwayson scripts
+        # Note: script_args is always raw format (immutable), labeled version is in params
         script_args = task.script_args if task.script_args else []
         if not script_args:
             script_args = get_default_script_args(scripts.scripts_txt2img)
@@ -381,6 +382,7 @@ class TaskExecutor:
 
         # Get script_args - use task's args if available, otherwise get defaults
         # from the script runner's UI components to satisfy alwayson scripts
+        # Note: script_args is always raw format (immutable), labeled version is in params
         script_args = task.script_args if task.script_args else []
         if not script_args:
             script_args = get_default_script_args(scripts.scripts_img2img)
