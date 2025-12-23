@@ -325,6 +325,25 @@
                                 ${params.denoising_strength !== undefined ? `<tr><td>Denoising</td><td>${params.denoising_strength}</td></tr>` : ''}
                             </table>
                         </div>
+                        ${params.override_settings && Object.keys(params.override_settings).length > 0 ? `
+                        <div class="task-details-section">
+                            <h4>Model Overrides</h4>
+                            <table class="task-details-table">
+                                ${Object.entries(params.override_settings).map(([key, value]) => {
+                                    const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                                    let displayValue = value;
+                                    if (value === null || value === undefined) {
+                                        displayValue = '<span class="arg-null">None</span>';
+                                    } else if (typeof value === 'boolean') {
+                                        displayValue = value ? 'Yes' : 'No';
+                                    } else if (typeof value === 'object') {
+                                        displayValue = JSON.stringify(value);
+                                    }
+                                    return `<tr><td>${displayKey}</td><td>${displayValue}</td></tr>`;
+                                }).join('')}
+                            </table>
+                        </div>
+                        ` : ''}
                         ${params.ui_settings && Object.keys(params.ui_settings).length > 0 ? `
                         <div class="task-details-section">
                             <h4>UI Settings</h4>
