@@ -350,16 +350,18 @@ class TaskExecutor:
             # Set scripts
             p.scripts = scripts.scripts_txt2img
 
-            # Get script_args - merge task's args with defaults
-            # This replaces None values (from skipped scripts like ControlNet) with defaults
+            # Get script_args from task (will be merged with defaults on main thread)
             # Note: script_args is always raw format (immutable), labeled version is in params
-            script_args = task.script_args if task.script_args else []
-            script_args = merge_script_args_with_defaults(script_args, scripts.scripts_txt2img)
+            task_script_args = task.script_args if task.script_args else []
 
             # Execute via main thread for GPU safety
+            # NOTE: merge_script_args_with_defaults must run on main thread because
+            # it accesses Gradio component values which are not thread-safe
             def run_generation():
                 with closing(p):
-                    # Set script_args with defaults so alwayson scripts work properly
+                    # Merge task's args with defaults ON MAIN THREAD
+                    # This replaces None values (from skipped scripts like ControlNet) with defaults
+                    script_args = merge_script_args_with_defaults(task_script_args, scripts.scripts_txt2img)
                     p.script_args = script_args
                     processed = process_images(p)
                     return processed
@@ -464,16 +466,18 @@ class TaskExecutor:
             # Set scripts
             p.scripts = scripts.scripts_img2img
 
-            # Get script_args - merge task's args with defaults
-            # This replaces None values (from skipped scripts like ControlNet) with defaults
+            # Get script_args from task (will be merged with defaults on main thread)
             # Note: script_args is always raw format (immutable), labeled version is in params
-            script_args = task.script_args if task.script_args else []
-            script_args = merge_script_args_with_defaults(script_args, scripts.scripts_img2img)
+            task_script_args = task.script_args if task.script_args else []
 
             # Execute via main thread for GPU safety
+            # NOTE: merge_script_args_with_defaults must run on main thread because
+            # it accesses Gradio component values which are not thread-safe
             def run_generation():
                 with closing(p):
-                    # Set script_args with defaults so alwayson scripts work properly
+                    # Merge task's args with defaults ON MAIN THREAD
+                    # This replaces None values (from skipped scripts like ControlNet) with defaults
+                    script_args = merge_script_args_with_defaults(task_script_args, scripts.scripts_img2img)
                     p.script_args = script_args
                     processed = process_images(p)
                     return processed
