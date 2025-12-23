@@ -59,58 +59,88 @@ _queue_status_html: Optional[gr.HTML] = None
 # ============================================================================
 
 
+def render_task_item(task: Task, index: int) -> str:
+    """Render a single task item as HTML."""
+    status_class = f"status-{task.status.value}"
+    status_icon = {
+        TaskStatus.PENDING: "⏳",
+        TaskStatus.RUNNING: "🔄",
+        TaskStatus.COMPLETED: "✅",
+        TaskStatus.FAILED: "❌",
+        TaskStatus.CANCELLED: "🚫"
+    }.get(task.status, "")
+
+    # Truncate prompt for display
+    prompt = task.params.get("prompt", "")[:60]
+    if len(task.params.get("prompt", "")) > 60:
+        prompt += "..."
+
+    # Escape HTML in prompt for title attribute
+    prompt_escaped = task.params.get("prompt", "").replace('"', '&quot;').replace("'", "&#39;")
+
+    checkpoint_short = task.get_short_checkpoint()
+
+    # Build action buttons based on status
+    actions_html = f'<button class="task-btn task-btn-info" onclick=\'taskSchedulerAction("info", "{task.id}")\' title="View details">ℹ️</button>'
+    if task.status in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+        actions_html += f'<button class="task-btn task-btn-retry" onclick=\'taskSchedulerAction("retry", "{task.id}")\' title="Retry this task">↻</button>'
+    if task.status != TaskStatus.RUNNING:
+        actions_html += f'<button class="task-btn task-btn-delete" onclick=\'taskSchedulerAction("delete", "{task.id}")\' title="Delete this task">🗑️</button>'
+
+    return f"""
+    <div class='task-item {status_class}' data-task-id='{task.id}'>
+        <div class='task-index'>{index}</div>
+        <div class='task-info'>
+            <div class='task-type'>{task.task_type.value}</div>
+            <div class='task-prompt' title="{prompt_escaped}">{prompt}</div>
+            <div class='task-checkpoint'>Model: {checkpoint_short}</div>
+        </div>
+        <div class='task-status'><span class='status-badge'>{status_icon} {task.status.value}</span></div>
+        <div class='task-actions'>{actions_html}</div>
+    </div>
+    """
+
+
 def render_task_list() -> str:
-    """Render the task list as HTML."""
+    """Render the task list as HTML with separate Active and History sections."""
     queue_manager = get_queue_manager()
-    executor = get_executor()
     tasks = queue_manager.get_all_tasks()
 
     if not tasks:
         return "<div class='task-empty'>No tasks in queue. Use the Queue button next to Generate to add tasks.</div>"
 
-    html_parts = ["<div class='task-list'>"]
+    # Separate active (pending/running) from history (completed/failed/cancelled)
+    active_tasks = [t for t in tasks if t.status in (TaskStatus.PENDING, TaskStatus.RUNNING)]
+    history_tasks = [t for t in tasks if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)]
 
-    for i, task in enumerate(tasks):
-        status_class = f"status-{task.status.value}"
-        status_icon = {
-            TaskStatus.PENDING: "⏳",
-            TaskStatus.RUNNING: "🔄",
-            TaskStatus.COMPLETED: "✅",
-            TaskStatus.FAILED: "❌",
-            TaskStatus.CANCELLED: "🚫"
-        }.get(task.status, "")
+    html_parts = []
 
-        # Truncate prompt for display
-        prompt = task.params.get("prompt", "")[:60]
-        if len(task.params.get("prompt", "")) > 60:
-            prompt += "..."
-
-        # Escape HTML in prompt for title attribute
-        prompt_escaped = task.params.get("prompt", "").replace('"', '&quot;').replace("'", "&#39;")
-
-        checkpoint_short = task.get_short_checkpoint()
-
-        # Build action buttons based on status
-        actions_html = ""
-        if task.status in (TaskStatus.FAILED, TaskStatus.CANCELLED):
-            actions_html += f'<button class="task-btn task-btn-retry" onclick=\'taskSchedulerAction("retry", "{task.id}")\' title="Retry this task">↻</button>'
-        if task.status != TaskStatus.RUNNING:
-            actions_html += f'<button class="task-btn task-btn-delete" onclick=\'taskSchedulerAction("delete", "{task.id}")\' title="Delete this task">🗑️</button>'
-
-        html_parts.append(f"""
-        <div class='task-item {status_class}' data-task-id='{task.id}'>
-            <div class='task-index'>{i + 1}</div>
-            <div class='task-info'>
-                <div class='task-type'>{task.task_type.value}</div>
-                <div class='task-prompt' title="{prompt_escaped}">{prompt}</div>
-                <div class='task-checkpoint'>Model: {checkpoint_short}</div>
-            </div>
-            <div class='task-status'><span class='status-badge'>{status_icon} {task.status.value}</span></div>
-            <div class='task-actions'>{actions_html}</div>
-        </div>
-        """)
-
+    # Active Tasks Section
+    html_parts.append("<div class='task-section task-section-active'>")
+    html_parts.append("<h3 class='task-section-header'>Active Tasks</h3>")
+    if active_tasks:
+        html_parts.append("<div class='task-list'>")
+        for i, task in enumerate(active_tasks, 1):
+            html_parts.append(render_task_item(task, i))
+        html_parts.append("</div>")
+    else:
+        html_parts.append("<div class='task-empty-small'>No active tasks</div>")
     html_parts.append("</div>")
+
+    # History Section (collapsible)
+    html_parts.append("<div class='task-section task-section-history'>")
+    html_parts.append(f"<details class='task-history-details' {'open' if not active_tasks else ''}>")
+    html_parts.append(f"<summary class='task-section-header task-history-summary'>History ({len(history_tasks)} tasks)</summary>")
+    if history_tasks:
+        html_parts.append("<div class='task-list task-list-history'>")
+        for i, task in enumerate(history_tasks, 1):
+            html_parts.append(render_task_item(task, i))
+        html_parts.append("</div>")
+    else:
+        html_parts.append("<div class='task-empty-small'>No history</div>")
+    html_parts.append("</details>")
+    html_parts.append("</div>")
+
     return "".join(html_parts)
 
 
@@ -427,6 +457,50 @@ def add_style():
         0% { opacity: 1; }
         50% { opacity: 0.5; }
         100% { opacity: 1; }
+    }
+    /* Task sections */
+    .task-section {
+        margin-bottom: 16px;
+    }
+    .task-section-header {
+        font-size: 1em;
+        font-weight: 600;
+        margin: 0 0 8px 0;
+        padding: 8px 12px;
+        background: var(--block-background-fill);
+        border-radius: 6px;
+        color: var(--body-text-color);
+    }
+    .task-section-active .task-section-header {
+        background: linear-gradient(135deg, rgba(33, 150, 243, 0.15), rgba(76, 175, 80, 0.15));
+        border-left: 3px solid #2196F3;
+    }
+    .task-history-details {
+        background: var(--block-background-fill);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    .task-history-summary {
+        cursor: pointer;
+        user-select: none;
+        margin: 0;
+        background: rgba(158, 158, 158, 0.1);
+        border-left: 3px solid #9E9E9E;
+    }
+    .task-history-summary:hover {
+        background: rgba(158, 158, 158, 0.2);
+    }
+    .task-list-history {
+        padding-top: 8px;
+    }
+    .task-list-history .task-item {
+        opacity: 0.8;
+    }
+    .task-empty-small {
+        text-align: center;
+        padding: 16px;
+        color: var(--body-text-color-subdued);
+        font-size: 0.9em;
     }
     </style>
     """

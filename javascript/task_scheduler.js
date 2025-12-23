@@ -65,12 +65,8 @@
         return hash.toString();
     }
 
-    // Render task list HTML
-    function renderTaskList(tasks) {
-        if (!tasks || tasks.length === 0) {
-            return "<div class='task-empty'>No tasks in queue. Use the Queue button next to Generate to add tasks.</div>";
-        }
-
+    // Render a single task item
+    function renderTaskItem(task, index) {
         const statusIcons = {
             'pending': '⏳',
             'running': '🔄',
@@ -79,38 +75,76 @@
             'cancelled': '🚫'
         };
 
-        let html = "<div class='task-list'>";
+        const statusClass = `status-${task.status}`;
+        const statusIcon = statusIcons[task.status] || '';
+        const prompt = (task.name || '').substring(0, 60) + ((task.name || '').length > 60 ? '...' : '');
+        const promptEscaped = (task.name || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-        tasks.forEach((task, i) => {
-            const statusClass = `status-${task.status}`;
-            const statusIcon = statusIcons[task.status] || '';
-            const prompt = (task.name || '').substring(0, 60) + ((task.name || '').length > 60 ? '...' : '');
-            const promptEscaped = (task.name || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        let actionsHtml = '';
+        actionsHtml += `<button class="task-btn task-btn-info" onclick='taskSchedulerAction("info", "${task.id}")' title="View task details">ℹ️</button>`;
+        if (task.status === 'failed' || task.status === 'cancelled') {
+            actionsHtml += `<button class="task-btn task-btn-retry" onclick='taskSchedulerAction("retry", "${task.id}")' title="Retry this task">↻</button>`;
+        }
+        if (task.status !== 'running') {
+            actionsHtml += `<button class="task-btn task-btn-delete" onclick='taskSchedulerAction("delete", "${task.id}")' title="Delete this task">🗑️</button>`;
+        }
 
-            let actionsHtml = '';
-            actionsHtml += `<button class="task-btn task-btn-info" onclick='taskSchedulerAction("info", "${task.id}")' title="View task details">ℹ️</button>`;
-            if (task.status === 'failed' || task.status === 'cancelled') {
-                actionsHtml += `<button class="task-btn task-btn-retry" onclick='taskSchedulerAction("retry", "${task.id}")' title="Retry this task">↻</button>`;
-            }
-            if (task.status !== 'running') {
-                actionsHtml += `<button class="task-btn task-btn-delete" onclick='taskSchedulerAction("delete", "${task.id}")' title="Delete this task">🗑️</button>`;
-            }
-
-            html += `
-            <div class='task-item ${statusClass}' data-task-id='${task.id}'>
-                <div class='task-index'>${i + 1}</div>
-                <div class='task-info'>
-                    <div class='task-type'>${task.task_type}</div>
-                    <div class='task-prompt' title="${promptEscaped}">${prompt}</div>
-                    <div class='task-checkpoint'>Model: ${task.checkpoint || 'Default'}</div>
-                </div>
-                <div class='task-status'><span class='status-badge'>${statusIcon} ${task.status}</span></div>
-                <div class='task-actions'>${actionsHtml}</div>
+        return `
+        <div class='task-item ${statusClass}' data-task-id='${task.id}'>
+            <div class='task-index'>${index}</div>
+            <div class='task-info'>
+                <div class='task-type'>${task.task_type}</div>
+                <div class='task-prompt' title="${promptEscaped}">${prompt}</div>
+                <div class='task-checkpoint'>Model: ${task.checkpoint || 'Default'}</div>
             </div>
-            `;
-        });
+            <div class='task-status'><span class='status-badge'>${statusIcon} ${task.status}</span></div>
+            <div class='task-actions'>${actionsHtml}</div>
+        </div>
+        `;
+    }
 
+    // Render task list HTML with separate Active and History sections
+    function renderTaskList(tasks) {
+        if (!tasks || tasks.length === 0) {
+            return "<div class='task-empty'>No tasks in queue. Use the Queue button next to Generate to add tasks.</div>";
+        }
+
+        // Separate active (pending/running) from history (completed/failed/cancelled)
+        const activeTasks = tasks.filter(t => t.status === 'pending' || t.status === 'running');
+        const historyTasks = tasks.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled');
+
+        let html = '';
+
+        // Active Tasks Section
+        html += "<div class='task-section task-section-active'>";
+        html += "<h3 class='task-section-header'>Active Tasks</h3>";
+        if (activeTasks.length > 0) {
+            html += "<div class='task-list'>";
+            activeTasks.forEach((task, i) => {
+                html += renderTaskItem(task, i + 1);
+            });
+            html += "</div>";
+        } else {
+            html += "<div class='task-empty-small'>No active tasks</div>";
+        }
         html += "</div>";
+
+        // History Section (collapsible)
+        html += "<div class='task-section task-section-history'>";
+        html += `<details class='task-history-details' ${activeTasks.length === 0 ? 'open' : ''}>`;
+        html += `<summary class='task-section-header task-history-summary'>History (${historyTasks.length} tasks)</summary>`;
+        if (historyTasks.length > 0) {
+            html += "<div class='task-list task-list-history'>";
+            historyTasks.forEach((task, i) => {
+                html += renderTaskItem(task, i + 1);
+            });
+            html += "</div>";
+        } else {
+            html += "<div class='task-empty-small'>No history</div>";
+        }
+        html += "</details>";
+        html += "</div>";
+
         return html;
     }
 
@@ -816,6 +850,50 @@
                 color: #60a5fa;
                 font-weight: 500;
                 word-break: break-word;
+                font-size: 0.9em;
+            }
+            /* Task sections */
+            .task-section {
+                margin-bottom: 16px;
+            }
+            .task-section-header {
+                font-size: 1em;
+                font-weight: 600;
+                margin: 0 0 8px 0;
+                padding: 8px 12px;
+                background: var(--block-background-fill, #1f2937);
+                border-radius: 6px;
+                color: var(--body-text-color, #fff);
+            }
+            .task-section-active .task-section-header {
+                background: linear-gradient(135deg, rgba(33, 150, 243, 0.15), rgba(76, 175, 80, 0.15));
+                border-left: 3px solid #2196F3;
+            }
+            .task-history-details {
+                background: var(--block-background-fill, #1f2937);
+                border-radius: 8px;
+                overflow: hidden;
+            }
+            .task-history-summary {
+                cursor: pointer;
+                user-select: none;
+                margin: 0;
+                background: rgba(158, 158, 158, 0.1);
+                border-left: 3px solid #9E9E9E;
+            }
+            .task-history-summary:hover {
+                background: rgba(158, 158, 158, 0.2);
+            }
+            .task-list-history {
+                padding-top: 8px;
+            }
+            .task-list-history .task-item {
+                opacity: 0.8;
+            }
+            .task-empty-small {
+                text-align: center;
+                padding: 16px;
+                color: var(--body-text-color-subdued, #9ca3af);
                 font-size: 0.9em;
             }
         `;
