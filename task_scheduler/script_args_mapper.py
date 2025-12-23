@@ -6,28 +6,26 @@ by inspecting their UI components. It can be used to add labels to the
 raw script_args values captured by the interceptor method.
 
 Usage:
-    from script_args_mapper import get_script_args_mapping, map_script_args
+    from task_scheduler.script_args_mapper import get_cached_mapping
 
     # Get the mapping for current scripts
-    mapping = get_script_args_mapping()
-
-    # Map raw script_args to labeled dict
-    labeled_args = map_script_args(script_args, mapping)
+    mapping = get_cached_mapping()
 """
-import os
-import sys
 
-# Add parent directory to path for imports
-ext_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ext_dir not in sys.path:
-    sys.path.insert(0, ext_dir)
+# Lazy imports to avoid loading modules.scripts too early
+_scripts_module = None
 
-try:
-    from modules import scripts
-except ImportError:
-    scripts = None
 
-print("[TaskScheduler] Script args mapper loaded")
+def _get_scripts():
+    """Lazy load the scripts module."""
+    global _scripts_module
+    if _scripts_module is None:
+        try:
+            from modules import scripts
+            _scripts_module = scripts
+        except ImportError:
+            pass
+    return _scripts_module
 
 
 def get_script_args_mapping():
@@ -44,6 +42,7 @@ def get_script_args_mapping():
     }
     """
     mapping = {}
+    scripts = _get_scripts()
 
     if scripts is None:
         print("[TaskScheduler:Mapper] modules.scripts not available")
@@ -147,42 +146,6 @@ def map_script_args(script_args, mapping=None):
         result.append(entry)
 
     return result
-
-
-def get_script_args_summary(script_args, mapping=None):
-    """
-    Get a summary of script_args grouped by script.
-
-    Returns a dict like:
-    {
-        "ADetailer": [
-            {"name": "enable", "label": "Enable", "value": True},
-            ...
-        ],
-        "ControlNet": [...],
-        ...
-    }
-    """
-    if mapping is None:
-        mapping = get_script_args_mapping()
-
-    summary = {}
-    for idx, value in enumerate(script_args):
-        if idx in mapping:
-            info = mapping[idx]
-            script_name = info.get("script") or "Core"
-
-            if script_name not in summary:
-                summary[script_name] = []
-
-            summary[script_name].append({
-                "name": info.get("name", f"arg_{idx}"),
-                "label": info.get("label", f"Argument {idx}"),
-                "type": info.get("type", "unknown"),
-                "value": value
-            })
-
-    return summary
 
 
 # Cache the mapping to avoid rebuilding on every call

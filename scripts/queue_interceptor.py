@@ -279,7 +279,7 @@ class QueueInterceptorScript(scripts.Script):
         # Try to get script args mapping for labels (optional plugin)
         args_mapping = None
         try:
-            from script_args_mapper import get_cached_mapping
+            from task_scheduler.script_args_mapper import get_cached_mapping
             args_mapping = get_cached_mapping()
             if args_mapping:
                 print(f"[TaskScheduler] Script args mapper available with {len(args_mapping)} mappings")
