@@ -198,6 +198,28 @@ def render_queue_status() -> str:
     """
 
 
+def get_button_states():
+    """Get the interactive states for all control buttons."""
+    executor = get_executor()
+    queue_manager = get_queue_manager()
+    stats = queue_manager.get_stats()
+
+    is_running = executor.is_running
+    has_pending = stats['pending'] > 0
+    has_completed = stats['completed'] > 0 or stats['failed'] > 0 or stats['cancelled'] > 0
+
+    # Start: enabled when not running
+    # Stop: enabled when running
+    # Pause: enabled when running or has pending tasks
+    # Clear: enabled when has completed/failed/cancelled
+    return {
+        'start': not is_running,
+        'stop': is_running,
+        'pause': is_running or has_pending,
+        'clear': has_completed,
+    }
+
+
 def start_queue():
     """Start processing the queue."""
     print("[TaskScheduler] start_queue() called")
@@ -216,14 +238,24 @@ def start_queue():
     print(f"[TaskScheduler] executor.start() returned: {result}")
     print(f"[TaskScheduler] Executor is_running after: {executor.is_running}")
 
-    return render_queue_status(), render_task_list()
+    states = get_button_states()
+    return (render_queue_status(), render_task_list(),
+            gr.update(interactive=states['start']),
+            gr.update(interactive=states['stop']),
+            gr.update(interactive=states['pause']),
+            gr.update(interactive=states['clear']))
 
 
 def stop_queue():
     """Stop processing the queue."""
     executor = get_executor()
     executor.stop()
-    return render_queue_status(), render_task_list()
+    states = get_button_states()
+    return (render_queue_status(), render_task_list(),
+            gr.update(interactive=states['start']),
+            gr.update(interactive=states['stop']),
+            gr.update(interactive=states['pause']),
+            gr.update(interactive=states['clear']))
 
 
 def pause_queue():
@@ -233,30 +265,53 @@ def pause_queue():
         executor.resume()
     else:
         executor.pause()
-    return render_queue_status(), render_task_list()
+    states = get_button_states()
+    return (render_queue_status(), render_task_list(),
+            gr.update(interactive=states['start']),
+            gr.update(interactive=states['stop']),
+            gr.update(interactive=states['pause']),
+            gr.update(interactive=states['clear']))
 
 
 def clear_completed():
     """Clear completed/failed/cancelled tasks."""
     queue_manager = get_queue_manager()
     count = queue_manager.clear_completed()
-    return render_queue_status(), render_task_list()
+    states = get_button_states()
+    return (render_queue_status(), render_task_list(),
+            gr.update(interactive=states['start']),
+            gr.update(interactive=states['stop']),
+            gr.update(interactive=states['pause']),
+            gr.update(interactive=states['clear']))
 
 
 def refresh_queue():
     """Refresh the queue display."""
-    return render_queue_status(), render_task_list()
+    states = get_button_states()
+    return (render_queue_status(), render_task_list(),
+            gr.update(interactive=states['start']),
+            gr.update(interactive=states['stop']),
+            gr.update(interactive=states['pause']),
+            gr.update(interactive=states['clear']))
 
 
 def delete_task(task_id: str):
     """Delete a task from the queue."""
     queue_manager = get_queue_manager()
     queue_manager.delete_task(task_id)
-    return render_queue_status(), render_task_list()
+    states = get_button_states()
+    return (render_queue_status(), render_task_list(),
+            gr.update(interactive=states['start']),
+            gr.update(interactive=states['stop']),
+            gr.update(interactive=states['pause']),
+            gr.update(interactive=states['clear']))
 
 
 def create_task_queue_tab():
     """Create the Task Queue tab UI."""
+    # Get initial button states
+    initial_states = get_button_states()
+
     with gr.Blocks(analytics_enabled=False) as task_queue_tab:
         gr.HTML("<h2>Task Queue</h2>")
         gr.HTML("<p style='color: var(--body-text-color-subdued); margin-bottom: 10px;'>Use the Queue buttons next to Generate in txt2img/img2img tabs to add tasks.</p>")
@@ -267,13 +322,33 @@ def create_task_queue_tab():
             elem_id="task_queue_status"
         )
 
-        # Control buttons
+        # Control buttons with elem_ids for styling
         with gr.Row():
-            start_btn = gr.Button("▶️ Start Queue", variant="primary")
-            stop_btn = gr.Button("⏹️ Stop Queue")
-            pause_btn = gr.Button("⏸️ Pause/Resume")
-            clear_btn = gr.Button("🗑️ Clear Completed")
-            refresh_btn = gr.Button("🔄 Refresh")
+            start_btn = gr.Button(
+                "▶️ Start Queue",
+                variant="primary",
+                elem_id="task_queue_start_btn",
+                interactive=initial_states['start']
+            )
+            stop_btn = gr.Button(
+                "⏹️ Stop Queue",
+                elem_id="task_queue_stop_btn",
+                interactive=initial_states['stop']
+            )
+            pause_btn = gr.Button(
+                "⏸️ Pause/Resume",
+                elem_id="task_queue_pause_btn",
+                interactive=initial_states['pause']
+            )
+            clear_btn = gr.Button(
+                "🗑️ Clear Completed",
+                elem_id="task_queue_clear_btn",
+                interactive=initial_states['clear']
+            )
+            refresh_btn = gr.Button(
+                "🔄 Refresh",
+                elem_id="task_queue_refresh_btn"
+            )
 
         # Task list
         task_list = gr.HTML(
@@ -285,37 +360,40 @@ def create_task_queue_tab():
         task_id_input = gr.Textbox(visible=False, elem_id="task_action_id")
         task_action_output = gr.HTML(visible=False)
 
-        # Button handlers
+        # All buttons that need state updates
+        all_btns = [start_btn, stop_btn, pause_btn, clear_btn]
+
+        # Button handlers - outputs include button state updates
         start_btn.click(
             fn=start_queue,
-            outputs=[queue_status, task_list]
+            outputs=[queue_status, task_list] + all_btns
         )
 
         stop_btn.click(
             fn=stop_queue,
-            outputs=[queue_status, task_list]
+            outputs=[queue_status, task_list] + all_btns
         )
 
         pause_btn.click(
             fn=pause_queue,
-            outputs=[queue_status, task_list]
+            outputs=[queue_status, task_list] + all_btns
         )
 
         clear_btn.click(
             fn=clear_completed,
-            outputs=[queue_status, task_list]
+            outputs=[queue_status, task_list] + all_btns
         )
 
         refresh_btn.click(
             fn=refresh_queue,
-            outputs=[queue_status, task_list]
+            outputs=[queue_status, task_list] + all_btns
         )
 
         # Task deletion handler
         task_id_input.change(
             fn=delete_task,
             inputs=[task_id_input],
-            outputs=[queue_status, task_list]
+            outputs=[queue_status, task_list] + all_btns
         )
 
         # Store references for updates
@@ -501,6 +579,48 @@ def add_style():
         padding: 16px;
         color: var(--body-text-color-subdued);
         font-size: 0.9em;
+    }
+    /* Control button styles - Stop (red) */
+    #task_queue_stop_btn {
+        background: linear-gradient(135deg, #e53935, #c62828) !important;
+        border-color: #b71c1c !important;
+        color: white !important;
+    }
+    #task_queue_stop_btn:hover:not(:disabled) {
+        background: linear-gradient(135deg, #f44336, #d32f2f) !important;
+    }
+    #task_queue_stop_btn:disabled,
+    #task_queue_stop_btn[disabled] {
+        opacity: 0.5 !important;
+        cursor: not-allowed !important;
+    }
+    /* Control button styles - Pause (orange) */
+    #task_queue_pause_btn {
+        background: linear-gradient(135deg, #fb8c00, #ef6c00) !important;
+        border-color: #e65100 !important;
+        color: white !important;
+    }
+    #task_queue_pause_btn:hover:not(:disabled) {
+        background: linear-gradient(135deg, #ffa726, #fb8c00) !important;
+    }
+    #task_queue_pause_btn:disabled,
+    #task_queue_pause_btn[disabled] {
+        opacity: 0.5 !important;
+        cursor: not-allowed !important;
+    }
+    /* Control button styles - Clear (teal) */
+    #task_queue_clear_btn {
+        background: linear-gradient(135deg, #00897b, #00695c) !important;
+        border-color: #004d40 !important;
+        color: white !important;
+    }
+    #task_queue_clear_btn:hover:not(:disabled) {
+        background: linear-gradient(135deg, #26a69a, #00897b) !important;
+    }
+    #task_queue_clear_btn:disabled,
+    #task_queue_clear_btn[disabled] {
+        opacity: 0.5 !important;
+        cursor: not-allowed !important;
     }
     </style>
     """
