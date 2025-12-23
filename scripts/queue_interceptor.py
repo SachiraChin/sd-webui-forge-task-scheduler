@@ -313,10 +313,19 @@ class QueueInterceptorScript(scripts.Script):
         script_args = []  # Raw values for execution (immutable)
         script_args_labeled = None  # Labeled version for display only
 
+        # Check if ControlNet capture is enabled in settings
+        enable_controlnet = getattr(shared.opts, 'task_scheduler_enable_controlnet', False)
+
         # Identify scripts with complex objects that can't be properly serialized
         # These scripts will have their args set to None (use defaults during execution)
-        scripts_to_skip = {"ControlNet", "controlnet"}  # Script titles to skip
+        # Skip ControlNet unless explicitly enabled in settings
+        scripts_to_skip = set() if enable_controlnet else {"ControlNet", "controlnet"}
         skip_ranges = set()  # Set of arg indices to skip
+
+        if enable_controlnet:
+            print("[TaskScheduler] ControlNet capture ENABLED - attempting to serialize ControlNet args")
+        else:
+            print("[TaskScheduler] ControlNet capture disabled - will use defaults during execution")
 
         try:
             from modules import scripts as scripts_module

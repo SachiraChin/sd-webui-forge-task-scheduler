@@ -356,6 +356,26 @@ def create_task_queue_tab():
             elem_id="task_queue_list"
         )
 
+        # Options section
+        with gr.Accordion("Options", open=False):
+            controlnet_checkbox = gr.Checkbox(
+                label="Enable ControlNet parameter capture (experimental)",
+                value=lambda: getattr(shared.opts, 'task_scheduler_enable_controlnet', False),
+                elem_id="task_queue_controlnet_checkbox",
+                info="When enabled, attempts to capture ControlNet settings. May cause errors."
+            )
+
+            # Sync checkbox with setting
+            def update_controlnet_setting(value):
+                shared.opts.task_scheduler_enable_controlnet = value
+                return value
+
+            controlnet_checkbox.change(
+                fn=update_controlnet_setting,
+                inputs=[controlnet_checkbox],
+                outputs=[controlnet_checkbox]
+            )
+
         # Hidden components for task actions
         task_id_input = gr.Textbox(visible=False, elem_id="task_action_id")
         task_action_output = gr.HTML(visible=False)
@@ -626,7 +646,37 @@ def add_style():
     """
 
 
+# ============================================================================
+# Extension Settings
+# ============================================================================
+SECTION_NAME = "Task Scheduler"
+
+
+def on_ui_settings():
+    """Register extension settings in the Settings tab."""
+    section = (SECTION_NAME, "task_scheduler")
+
+    shared.opts.add_option(
+        "task_scheduler_enable_controlnet",
+        shared.OptionInfo(
+            default=False,
+            label="Enable ControlNet parameter capture (experimental)",
+            component=gr.Checkbox,
+            section=section,
+        ).info("When enabled, attempts to capture ControlNet settings. May cause errors with some ControlNet configurations.")
+    )
+
+
+def get_setting(name: str, default=None):
+    """Get a task scheduler setting value."""
+    setting_name = f"task_scheduler_{name}"
+    if hasattr(shared.opts, setting_name):
+        return getattr(shared.opts, setting_name)
+    return default
+
+
 # Register callbacks
 script_callbacks.on_ui_tabs(on_ui_tabs)
 script_callbacks.on_after_component(on_after_component)
 script_callbacks.on_app_started(on_app_started)
+script_callbacks.on_ui_settings(on_ui_settings)
