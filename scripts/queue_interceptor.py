@@ -192,9 +192,13 @@ class QueueInterceptorScript(scripts.Script):
             "do_not_save_grid": p.do_not_save_grid,
         }
 
+        # Get p.override_settings first (model overrides take precedence)
+        p_override_settings = {}
+        if hasattr(p, 'override_settings') and p.override_settings:
+            p_override_settings = dict(p.override_settings)
+
         # Capture UI-visible settings from shared.opts
-        # 1. Get user's configured quicksettings (shown in top bar)
-        # 2. Add essential settings that should always be captured
+        # Skip settings that are already in p.override_settings (model overrides win)
         try:
             # Start with essential settings that affect generation
             essential_settings = {
@@ -212,15 +216,22 @@ class QueueInterceptorScript(scripts.Script):
             # Combine both sets
             settings_to_capture = essential_settings | user_quicksettings
 
-            # Capture all values
+            # Capture values, but skip settings already in p.override_settings
             captured_settings = {}
+            skipped_settings = []
             for setting_name in settings_to_capture:
+                if setting_name in p_override_settings:
+                    # Skip - model override takes precedence
+                    skipped_settings.append(setting_name)
+                    continue
                 if hasattr(shared.opts, setting_name):
                     value = getattr(shared.opts, setting_name)
                     captured_settings[setting_name] = value
 
             params["ui_settings"] = captured_settings
             print(f"[TaskScheduler] Captured {len(captured_settings)} UI settings: {list(captured_settings.keys())}")
+            if skipped_settings:
+                print(f"[TaskScheduler] Skipped {len(skipped_settings)} UI settings (using model overrides): {skipped_settings}")
         except Exception as e:
             print(f"[TaskScheduler] Could not capture UI settings: {e}")
 
@@ -282,27 +293,10 @@ class QueueInterceptorScript(scripts.Script):
                 p.image_mask.save(mask_path)
                 params["mask_path"] = mask_path
 
-        # Capture override settings from processing object
-        if hasattr(p, 'override_settings') and p.override_settings:
-            params["override_settings"] = dict(p.override_settings)
-            print(f"[TaskScheduler] Captured p.override_settings: {p.override_settings}")
-        else:
-            print(f"[TaskScheduler] p.override_settings is empty or missing")
-
-        # Also check for model-specific override settings from checkpoint info
-        try:
-            if hasattr(shared, 'sd_model') and shared.sd_model:
-                checkpoint_info = getattr(shared.sd_model, 'sd_checkpoint_info', None)
-                if checkpoint_info:
-                    model_overrides = getattr(checkpoint_info, 'override_settings', None)
-                    if model_overrides:
-                        print(f"[TaskScheduler] Found model checkpoint overrides: {model_overrides}")
-                        if "override_settings" not in params:
-                            params["override_settings"] = {}
-                        # Model overrides take precedence
-                        params["override_settings"].update(model_overrides)
-        except Exception as e:
-            print(f"[TaskScheduler] Error getting model overrides: {e}")
+        # Store the override settings we captured earlier (p.override_settings)
+        if p_override_settings:
+            params["override_settings"] = p_override_settings
+            print(f"[TaskScheduler] Captured p.override_settings: {p_override_settings}")
 
         # Capture extra generation params (includes extension params!)
         if hasattr(p, 'extra_generation_params') and p.extra_generation_params:
