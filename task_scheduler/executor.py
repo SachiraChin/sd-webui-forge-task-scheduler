@@ -6,10 +6,48 @@ import threading
 import time
 import traceback
 from typing import Optional, Callable, Any
-from contextlib import closing
+from contextlib import closing, contextmanager
 
 from .models import Task, TaskStatus, TaskType
 from .queue_manager import get_queue_manager, QueueManager
+
+
+@contextmanager
+def temporary_settings_override(override_settings: dict):
+    """
+    Context manager to temporarily apply settings and restore originals after.
+
+    This ensures UI settings (VAE, Clip Skip, etc.) are restored after task
+    execution, regardless of success or failure.
+    """
+    from modules import shared
+
+    if not override_settings:
+        yield
+        return
+
+    # Save original values
+    original_values = {}
+    for key in override_settings:
+        if hasattr(shared.opts, key):
+            original_values[key] = getattr(shared.opts, key)
+
+    print(f"[TaskScheduler] Saved {len(original_values)} original settings")
+
+    try:
+        yield
+    finally:
+        # Restore original values
+        restored = []
+        for key, value in original_values.items():
+            try:
+                setattr(shared.opts, key, value)
+                restored.append(key)
+            except Exception as e:
+                print(f"[TaskScheduler] Failed to restore setting '{key}': {e}")
+
+        if restored:
+            print(f"[TaskScheduler] Restored {len(restored)} settings: {restored}")
 
 
 def get_default_script_args(script_runner) -> list[Any]:
@@ -231,81 +269,83 @@ class TaskExecutor:
             override_settings.update(ui_settings)
             print(f"[TaskScheduler] Applying {len(ui_settings)} UI settings: {list(ui_settings.keys())}")
 
-        # Create processing object
-        p = StableDiffusionProcessingTxt2Img(
-            outpath_samples=shared.opts.outdir_samples or shared.opts.outdir_txt2img_samples,
-            outpath_grids=shared.opts.outdir_grids or shared.opts.outdir_txt2img_grids,
-            prompt=params.get("prompt", ""),
-            negative_prompt=params.get("negative_prompt", ""),
-            styles=params.get("prompt_styles", []),
-            batch_size=params.get("batch_size", 1),
-            n_iter=params.get("n_iter", 1),
-            cfg_scale=params.get("cfg_scale", 7.0),
-            distilled_cfg_scale=params.get("distilled_cfg_scale", 3.5),
-            width=params.get("width", 512),
-            height=params.get("height", 512),
-            enable_hr=params.get("enable_hr", False),
-            denoising_strength=params.get("denoising_strength", 0.7),
-            hr_scale=params.get("hr_scale", 2.0),
-            hr_upscaler=params.get("hr_upscaler", "Latent"),
-            hr_second_pass_steps=params.get("hr_second_pass_steps", 0),
-            hr_resize_x=params.get("hr_resize_x", 0),
-            hr_resize_y=params.get("hr_resize_y", 0),
-            hr_checkpoint_name=params.get("hr_checkpoint_name"),
-            hr_additional_modules=params.get("hr_additional_modules", []),
-            hr_sampler_name=params.get("hr_sampler_name"),
-            hr_scheduler=params.get("hr_scheduler"),
-            hr_prompt=params.get("hr_prompt", ""),
-            hr_negative_prompt=params.get("hr_negative_prompt", ""),
-            hr_cfg=params.get("hr_cfg"),
-            hr_distilled_cfg=params.get("hr_distilled_cfg"),
-            override_settings=override_settings,
-        )
+        # Use context manager to ensure settings are restored after execution
+        with temporary_settings_override(override_settings):
+            # Create processing object
+            p = StableDiffusionProcessingTxt2Img(
+                outpath_samples=shared.opts.outdir_samples or shared.opts.outdir_txt2img_samples,
+                outpath_grids=shared.opts.outdir_grids or shared.opts.outdir_txt2img_grids,
+                prompt=params.get("prompt", ""),
+                negative_prompt=params.get("negative_prompt", ""),
+                styles=params.get("prompt_styles", []),
+                batch_size=params.get("batch_size", 1),
+                n_iter=params.get("n_iter", 1),
+                cfg_scale=params.get("cfg_scale", 7.0),
+                distilled_cfg_scale=params.get("distilled_cfg_scale", 3.5),
+                width=params.get("width", 512),
+                height=params.get("height", 512),
+                enable_hr=params.get("enable_hr", False),
+                denoising_strength=params.get("denoising_strength", 0.7),
+                hr_scale=params.get("hr_scale", 2.0),
+                hr_upscaler=params.get("hr_upscaler", "Latent"),
+                hr_second_pass_steps=params.get("hr_second_pass_steps", 0),
+                hr_resize_x=params.get("hr_resize_x", 0),
+                hr_resize_y=params.get("hr_resize_y", 0),
+                hr_checkpoint_name=params.get("hr_checkpoint_name"),
+                hr_additional_modules=params.get("hr_additional_modules", []),
+                hr_sampler_name=params.get("hr_sampler_name"),
+                hr_scheduler=params.get("hr_scheduler"),
+                hr_prompt=params.get("hr_prompt", ""),
+                hr_negative_prompt=params.get("hr_negative_prompt", ""),
+                hr_cfg=params.get("hr_cfg"),
+                hr_distilled_cfg=params.get("hr_distilled_cfg"),
+                override_settings=override_settings,
+            )
 
-        # Set sampler
-        if "sampler_name" in params:
-            p.sampler_name = params["sampler_name"]
-        if "scheduler" in params:
-            p.scheduler = params["scheduler"]
-        if "steps" in params:
-            p.steps = params["steps"]
-        if "seed" in params:
-            p.seed = params["seed"]
-        if "subseed" in params:
-            p.subseed = params["subseed"]
-        if "subseed_strength" in params:
-            p.subseed_strength = params["subseed_strength"]
+            # Set sampler
+            if "sampler_name" in params:
+                p.sampler_name = params["sampler_name"]
+            if "scheduler" in params:
+                p.scheduler = params["scheduler"]
+            if "steps" in params:
+                p.steps = params["steps"]
+            if "seed" in params:
+                p.seed = params["seed"]
+            if "subseed" in params:
+                p.subseed = params["subseed"]
+            if "subseed_strength" in params:
+                p.subseed_strength = params["subseed_strength"]
 
-        # Set scripts
-        p.scripts = scripts.scripts_txt2img
+            # Set scripts
+            p.scripts = scripts.scripts_txt2img
 
-        # Get script_args - use task's args if available, otherwise get defaults
-        # from the script runner's UI components to satisfy alwayson scripts
-        # Note: script_args is always raw format (immutable), labeled version is in params
-        script_args = task.script_args if task.script_args else []
-        if not script_args:
-            script_args = get_default_script_args(scripts.scripts_txt2img)
+            # Get script_args - use task's args if available, otherwise get defaults
+            # from the script runner's UI components to satisfy alwayson scripts
+            # Note: script_args is always raw format (immutable), labeled version is in params
+            script_args = task.script_args if task.script_args else []
+            if not script_args:
+                script_args = get_default_script_args(scripts.scripts_txt2img)
 
-        # Execute via main thread for GPU safety
-        def run_generation():
-            with closing(p):
-                # Set script_args with defaults so alwayson scripts work properly
-                p.script_args = script_args
-                processed = process_images(p)
-                return processed
+            # Execute via main thread for GPU safety
+            def run_generation():
+                with closing(p):
+                    # Set script_args with defaults so alwayson scripts work properly
+                    p.script_args = script_args
+                    processed = process_images(p)
+                    return processed
 
-        processed = main_thread.run_and_wait_result(run_generation)
+            processed = main_thread.run_and_wait_result(run_generation)
 
-        # Clear progress
-        shared.total_tqdm.clear()
+            # Clear progress
+            shared.total_tqdm.clear()
 
-        # Collect results
-        result_images = []
-        for img in processed.images:
-            if hasattr(img, 'already_saved_as') and img.already_saved_as:
-                result_images.append(img.already_saved_as)
+            # Collect results
+            result_images = []
+            for img in processed.images:
+                if hasattr(img, 'already_saved_as') and img.already_saved_as:
+                    result_images.append(img.already_saved_as)
 
-        return result_images, processed.info if processed.info else ""
+            return result_images, processed.info if processed.info else ""
 
     def _execute_img2img(self, task: Task) -> tuple[list[str], str]:
         """Execute an img2img task."""
@@ -349,76 +389,78 @@ class TaskExecutor:
             except Exception as e:
                 print(f"[TaskScheduler] Failed to load mask: {mask_path} - {e}")
 
-        # Create processing object
-        p = StableDiffusionProcessingImg2Img(
-            outpath_samples=shared.opts.outdir_samples or shared.opts.outdir_img2img_samples,
-            outpath_grids=shared.opts.outdir_grids or shared.opts.outdir_img2img_grids,
-            prompt=params.get("prompt", ""),
-            negative_prompt=params.get("negative_prompt", ""),
-            styles=params.get("prompt_styles", []),
-            batch_size=params.get("batch_size", 1),
-            n_iter=params.get("n_iter", 1),
-            cfg_scale=params.get("cfg_scale", 7.0),
-            distilled_cfg_scale=params.get("distilled_cfg_scale", 3.5),
-            width=params.get("width", 512),
-            height=params.get("height", 512),
-            init_images=init_images,
-            mask=mask,
-            mask_blur=params.get("mask_blur", 4),
-            inpainting_fill=params.get("inpainting_fill", 0),
-            resize_mode=params.get("resize_mode", 0),
-            denoising_strength=params.get("denoising_strength", 0.75),
-            image_cfg_scale=params.get("image_cfg_scale", 1.5),
-            inpaint_full_res=params.get("inpaint_full_res", False),
-            inpaint_full_res_padding=params.get("inpaint_full_res_padding", 32),
-            inpainting_mask_invert=params.get("inpainting_mask_invert", 0),
-            override_settings=override_settings,
-        )
+        # Use context manager to ensure settings are restored after execution
+        with temporary_settings_override(override_settings):
+            # Create processing object
+            p = StableDiffusionProcessingImg2Img(
+                outpath_samples=shared.opts.outdir_samples or shared.opts.outdir_img2img_samples,
+                outpath_grids=shared.opts.outdir_grids or shared.opts.outdir_img2img_grids,
+                prompt=params.get("prompt", ""),
+                negative_prompt=params.get("negative_prompt", ""),
+                styles=params.get("prompt_styles", []),
+                batch_size=params.get("batch_size", 1),
+                n_iter=params.get("n_iter", 1),
+                cfg_scale=params.get("cfg_scale", 7.0),
+                distilled_cfg_scale=params.get("distilled_cfg_scale", 3.5),
+                width=params.get("width", 512),
+                height=params.get("height", 512),
+                init_images=init_images,
+                mask=mask,
+                mask_blur=params.get("mask_blur", 4),
+                inpainting_fill=params.get("inpainting_fill", 0),
+                resize_mode=params.get("resize_mode", 0),
+                denoising_strength=params.get("denoising_strength", 0.75),
+                image_cfg_scale=params.get("image_cfg_scale", 1.5),
+                inpaint_full_res=params.get("inpaint_full_res", False),
+                inpaint_full_res_padding=params.get("inpaint_full_res_padding", 32),
+                inpainting_mask_invert=params.get("inpainting_mask_invert", 0),
+                override_settings=override_settings,
+            )
 
-        # Set sampler
-        if "sampler_name" in params:
-            p.sampler_name = params["sampler_name"]
-        if "scheduler" in params:
-            p.scheduler = params["scheduler"]
-        if "steps" in params:
-            p.steps = params["steps"]
-        if "seed" in params:
-            p.seed = params["seed"]
-        if "subseed" in params:
-            p.subseed = params["subseed"]
-        if "subseed_strength" in params:
-            p.subseed_strength = params["subseed_strength"]
+            # Set sampler
+            if "sampler_name" in params:
+                p.sampler_name = params["sampler_name"]
+            if "scheduler" in params:
+                p.scheduler = params["scheduler"]
+            if "steps" in params:
+                p.steps = params["steps"]
+            if "seed" in params:
+                p.seed = params["seed"]
+            if "subseed" in params:
+                p.subseed = params["subseed"]
+            if "subseed_strength" in params:
+                p.subseed_strength = params["subseed_strength"]
 
-        # Set scripts
-        p.scripts = scripts.scripts_img2img
+            # Set scripts
+            p.scripts = scripts.scripts_img2img
 
-        # Get script_args - use task's args if available, otherwise get defaults
-        # from the script runner's UI components to satisfy alwayson scripts
-        # Note: script_args is always raw format (immutable), labeled version is in params
-        script_args = task.script_args if task.script_args else []
-        if not script_args:
-            script_args = get_default_script_args(scripts.scripts_img2img)
+            # Get script_args - use task's args if available, otherwise get defaults
+            # from the script runner's UI components to satisfy alwayson scripts
+            # Note: script_args is always raw format (immutable), labeled version is in params
+            script_args = task.script_args if task.script_args else []
+            if not script_args:
+                script_args = get_default_script_args(scripts.scripts_img2img)
 
-        # Execute via main thread for GPU safety
-        def run_generation():
-            with closing(p):
-                # Set script_args with defaults so alwayson scripts work properly
-                p.script_args = script_args
-                processed = process_images(p)
-                return processed
+            # Execute via main thread for GPU safety
+            def run_generation():
+                with closing(p):
+                    # Set script_args with defaults so alwayson scripts work properly
+                    p.script_args = script_args
+                    processed = process_images(p)
+                    return processed
 
-        processed = main_thread.run_and_wait_result(run_generation)
+            processed = main_thread.run_and_wait_result(run_generation)
 
-        # Clear progress
-        shared.total_tqdm.clear()
+            # Clear progress
+            shared.total_tqdm.clear()
 
-        # Collect results
-        result_images = []
-        for img in processed.images:
-            if hasattr(img, 'already_saved_as') and img.already_saved_as:
-                result_images.append(img.already_saved_as)
+            # Collect results
+            result_images = []
+            for img in processed.images:
+                if hasattr(img, 'already_saved_as') and img.already_saved_as:
+                    result_images.append(img.already_saved_as)
 
-        return result_images, processed.info if processed.info else ""
+            return result_images, processed.info if processed.info else ""
 
     def register_status_callback(self, callback: Callable) -> None:
         """Register a callback for executor status changes."""
