@@ -325,6 +325,26 @@
                                 ${params.denoising_strength !== undefined ? `<tr><td>Denoising</td><td>${params.denoising_strength}</td></tr>` : ''}
                             </table>
                         </div>
+                        ${params.ui_settings && Object.keys(params.ui_settings).length > 0 ? `
+                        <div class="task-details-section">
+                            <h4>UI Settings</h4>
+                            <table class="task-details-table">
+                                ${Object.entries(params.ui_settings).map(([key, value]) => {
+                                    // Format setting name to be more readable
+                                    const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                                    let displayValue = value;
+                                    if (value === null || value === undefined) {
+                                        displayValue = '<span class="arg-null">None</span>';
+                                    } else if (typeof value === 'boolean') {
+                                        displayValue = value ? 'Yes' : 'No';
+                                    } else if (typeof value === 'object') {
+                                        displayValue = JSON.stringify(value);
+                                    }
+                                    return `<tr><td>${displayKey}</td><td>${displayValue}</td></tr>`;
+                                }).join('')}
+                            </table>
+                        </div>
+                        ` : ''}
                         ${params.enable_hr ? `
                         <div class="task-details-section">
                             <h4>Hires Fix</h4>

@@ -192,12 +192,37 @@ class QueueInterceptorScript(scripts.Script):
             "do_not_save_grid": p.do_not_save_grid,
         }
 
-        # Capture VAE and Clip Skip from shared options
+        # Capture UI-visible settings from shared.opts
+        # 1. Get user's configured quicksettings (shown in top bar)
+        # 2. Add essential settings that should always be captured
         try:
-            params["sd_vae"] = shared.opts.sd_vae
-            params["CLIP_stop_at_last_layers"] = shared.opts.CLIP_stop_at_last_layers
+            # Start with essential settings that affect generation
+            essential_settings = {
+                "sd_vae",                        # VAE
+                "CLIP_stop_at_last_layers",      # Clip Skip
+                "eta_noise_seed_delta",          # ENSD
+                "randn_source",                  # RNG source
+            }
+
+            # Get user's configured quicksettings
+            user_quicksettings = set()
+            if hasattr(shared.opts, 'quick_setting_list') and shared.opts.quick_setting_list:
+                user_quicksettings = set(shared.opts.quick_setting_list)
+
+            # Combine both sets
+            settings_to_capture = essential_settings | user_quicksettings
+
+            # Capture all values
+            captured_settings = {}
+            for setting_name in settings_to_capture:
+                if hasattr(shared.opts, setting_name):
+                    value = getattr(shared.opts, setting_name)
+                    captured_settings[setting_name] = value
+
+            params["ui_settings"] = captured_settings
+            print(f"[TaskScheduler] Captured {len(captured_settings)} UI settings: {list(captured_settings.keys())}")
         except Exception as e:
-            print(f"[TaskScheduler] Could not capture VAE/Clip Skip: {e}")
+            print(f"[TaskScheduler] Could not capture UI settings: {e}")
 
         # Txt2img specific parameters
         if task_type == TaskType.TXT2IMG:
@@ -281,13 +306,17 @@ class QueueInterceptorScript(scripts.Script):
         try:
             from task_scheduler.script_args_mapper import get_cached_mapping
             args_mapping = get_cached_mapping()
+            print(f"[TaskScheduler] Script args mapper returned: {len(args_mapping) if args_mapping else 0} mappings")
             if args_mapping:
-                print(f"[TaskScheduler] Script args mapper available with {len(args_mapping)} mappings")
                 script_args_labeled = []
-        except ImportError:
-            pass  # Mapper not available, that's fine
+            else:
+                print("[TaskScheduler] Mapper returned empty, labels will not be available")
+        except ImportError as e:
+            print(f"[TaskScheduler] Mapper import failed: {e}")
         except Exception as e:
             print(f"[TaskScheduler] Error loading script args mapper: {e}")
+            import traceback
+            traceback.print_exc()
 
         if hasattr(p, 'script_args') and p.script_args:
             for i, arg in enumerate(p.script_args):

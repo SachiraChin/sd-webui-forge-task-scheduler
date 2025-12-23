@@ -73,9 +73,9 @@ def get_script_args_mapping():
             ui_components = []
 
             # Check if script has stored UI components
-            if hasattr(script, 'ui_components'):
+            if hasattr(script, 'ui_components') and script.ui_components:
                 ui_components = script.ui_components
-            elif hasattr(script, 'infotext_fields'):
+            elif hasattr(script, 'infotext_fields') and script.infotext_fields:
                 # Some scripts store field info here
                 for field_info in script.infotext_fields:
                     if hasattr(field_info, '__iter__') and len(field_info) >= 2:

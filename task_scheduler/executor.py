@@ -220,10 +220,16 @@ class TaskExecutor:
 
         params = task.params
 
-        # Build override_settings with checkpoint
+        # Build override_settings with checkpoint and UI settings
         override_settings = params.get("override_settings", {}).copy()
         if task.checkpoint:
             override_settings["sd_model_checkpoint"] = task.checkpoint
+
+        # Apply captured UI settings (VAE, Clip Skip, quicksettings, etc.)
+        ui_settings = params.get("ui_settings", {})
+        if ui_settings:
+            override_settings.update(ui_settings)
+            print(f"[TaskScheduler] Applying {len(ui_settings)} UI settings: {list(ui_settings.keys())}")
 
         # Create processing object
         p = StableDiffusionProcessingTxt2Img(
@@ -310,10 +316,16 @@ class TaskExecutor:
 
         params = task.params
 
-        # Build override_settings with checkpoint
+        # Build override_settings with checkpoint and UI settings
         override_settings = params.get("override_settings", {}).copy()
         if task.checkpoint:
             override_settings["sd_model_checkpoint"] = task.checkpoint
+
+        # Apply captured UI settings (VAE, Clip Skip, quicksettings, etc.)
+        ui_settings = params.get("ui_settings", {})
+        if ui_settings:
+            override_settings.update(ui_settings)
+            print(f"[TaskScheduler] Applying {len(ui_settings)} UI settings: {list(ui_settings.keys())}")
 
         # Load init image(s)
         init_images = []
