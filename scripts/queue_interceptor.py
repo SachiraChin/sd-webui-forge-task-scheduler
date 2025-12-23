@@ -301,6 +301,27 @@ class QueueInterceptorScript(scripts.Script):
         script_args = []  # Raw values for execution (immutable)
         script_args_labeled = None  # Labeled version for display only
 
+        # Identify scripts with complex objects that can't be properly serialized
+        # These scripts will have their args set to None (use defaults during execution)
+        scripts_to_skip = {"ControlNet", "controlnet"}  # Script titles to skip
+        skip_ranges = set()  # Set of arg indices to skip
+
+        try:
+            from modules import scripts as scripts_module
+            script_runner = scripts_module.scripts_txt2img if task_type == TaskType.TXT2IMG else scripts_module.scripts_img2img
+            if script_runner:
+                for script in script_runner.scripts:
+                    script_title = getattr(script, 'title', lambda: '')()
+                    if script_title in scripts_to_skip:
+                        args_from = getattr(script, 'args_from', None)
+                        args_to = getattr(script, 'args_to', None)
+                        if args_from is not None and args_to is not None:
+                            for idx in range(args_from, args_to):
+                                skip_ranges.add(idx)
+                            print(f"[TaskScheduler] Skipping {script_title} args [{args_from}:{args_to}] (complex objects)")
+        except Exception as e:
+            print(f"[TaskScheduler] Error identifying scripts to skip: {e}")
+
         # Try to get script args mapping for labels (optional plugin)
         args_mapping = None
         try:
@@ -320,6 +341,20 @@ class QueueInterceptorScript(scripts.Script):
 
         if hasattr(p, 'script_args') and p.script_args:
             for i, arg in enumerate(p.script_args):
+                # Skip args from complex scripts (like ControlNet)
+                if i in skip_ranges:
+                    script_args.append(None)
+                    if script_args_labeled is not None:
+                        script_args_labeled.append({
+                            "index": i,
+                            "name": f"arg_{i}",
+                            "label": f"[Skipped] Argument {i}",
+                            "script": "ControlNet",
+                            "type": "skipped",
+                            "value": None
+                        })
+                    continue
+
                 # Serialize the value
                 serialized_value = None
                 try:

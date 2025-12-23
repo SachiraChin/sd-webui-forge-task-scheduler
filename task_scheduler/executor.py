@@ -72,6 +72,37 @@ def get_default_script_args(script_runner) -> list[Any]:
     return defaults
 
 
+def merge_script_args_with_defaults(script_args: list, script_runner) -> list[Any]:
+    """
+    Merge script_args with defaults, replacing None values with defaults.
+
+    This is needed because some scripts (like ControlNet) have complex objects
+    that can't be serialized. During queue, those are set to None, and here
+    we replace them with proper defaults so the scripts work correctly.
+    """
+    defaults = get_default_script_args(script_runner)
+
+    if not script_args:
+        return defaults
+
+    # Ensure we have enough args
+    result = list(script_args)
+    while len(result) < len(defaults):
+        result.append(None)
+
+    # Replace None values with defaults
+    replaced_count = 0
+    for i in range(len(result)):
+        if result[i] is None and i < len(defaults) and defaults[i] is not None:
+            result[i] = defaults[i]
+            replaced_count += 1
+
+    if replaced_count > 0:
+        print(f"[TaskScheduler] Replaced {replaced_count} None script_args with defaults")
+
+    return result
+
+
 class TaskExecutor:
     """
     Executes queued tasks in the background.
@@ -319,12 +350,11 @@ class TaskExecutor:
             # Set scripts
             p.scripts = scripts.scripts_txt2img
 
-            # Get script_args - use task's args if available, otherwise get defaults
-            # from the script runner's UI components to satisfy alwayson scripts
+            # Get script_args - merge task's args with defaults
+            # This replaces None values (from skipped scripts like ControlNet) with defaults
             # Note: script_args is always raw format (immutable), labeled version is in params
             script_args = task.script_args if task.script_args else []
-            if not script_args:
-                script_args = get_default_script_args(scripts.scripts_txt2img)
+            script_args = merge_script_args_with_defaults(script_args, scripts.scripts_txt2img)
 
             # Execute via main thread for GPU safety
             def run_generation():
@@ -434,12 +464,11 @@ class TaskExecutor:
             # Set scripts
             p.scripts = scripts.scripts_img2img
 
-            # Get script_args - use task's args if available, otherwise get defaults
-            # from the script runner's UI components to satisfy alwayson scripts
+            # Get script_args - merge task's args with defaults
+            # This replaces None values (from skipped scripts like ControlNet) with defaults
             # Note: script_args is always raw format (immutable), labeled version is in params
             script_args = task.script_args if task.script_args else []
-            if not script_args:
-                script_args = get_default_script_args(scripts.scripts_img2img)
+            script_args = merge_script_args_with_defaults(script_args, scripts.scripts_img2img)
 
             # Execute via main thread for GPU safety
             def run_generation():

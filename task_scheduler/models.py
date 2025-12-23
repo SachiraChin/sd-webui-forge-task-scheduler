@@ -8,6 +8,8 @@ from enum import Enum
 import json
 import uuid
 
+from .script_args_serializer import serialize_script_args, deserialize_script_args
+
 
 class TaskStatus(str, Enum):
     """Task execution status."""
@@ -74,7 +76,7 @@ class Task:
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "params": json.dumps(self.params),
             "checkpoint": self.checkpoint,
-            "script_args": json.dumps(self.script_args, default=str),
+            "script_args": serialize_script_args(self.script_args),
             "result_images": json.dumps(self.result_images),
             "result_info": self.result_info,
             "error": self.error,
@@ -94,7 +96,7 @@ class Task:
             completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
             params=json.loads(data["params"]) if data.get("params") else {},
             checkpoint=data.get("checkpoint", ""),
-            script_args=json.loads(data["script_args"]) if data.get("script_args") else [],
+            script_args=deserialize_script_args(data.get("script_args", "")),
             result_images=json.loads(data["result_images"]) if data.get("result_images") else [],
             result_info=data.get("result_info", ""),
             error=data.get("error"),
