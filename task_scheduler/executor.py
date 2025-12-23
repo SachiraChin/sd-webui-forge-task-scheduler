@@ -215,11 +215,10 @@ class TaskExecutor:
             # Get next task
             task = self._queue.get_next_task()
             if task is None:
-                # No pending tasks, wait a bit
-                if loop_count % 20 == 1:  # Log occasionally
-                    print("[TaskScheduler] No pending tasks, waiting...")
-                time.sleep(0.5)
-                continue
+                # No pending tasks - stop the executor
+                # User must click "Start Queue" again to process new tasks
+                print("[TaskScheduler] No pending tasks, stopping executor")
+                break
 
             print(f"[TaskScheduler] Found task to execute: {task.id}")
             # Execute the task
@@ -228,6 +227,7 @@ class TaskExecutor:
         print("[TaskScheduler] Executor run loop ended")
         self._is_running = False
         self._current_task = None
+        self._notify_status("finished")
 
     def _is_forge_busy(self) -> bool:
         """Check if Forge is currently running a generation."""
