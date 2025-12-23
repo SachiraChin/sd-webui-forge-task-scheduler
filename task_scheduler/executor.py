@@ -289,16 +289,24 @@ class TaskExecutor:
 
         params = task.params
 
-        # Build override_settings with checkpoint and UI settings
-        override_settings = params.get("override_settings", {}).copy()
+        # Build override_settings: UI settings first, then model overrides on top
+        # Model override settings (from p.override_settings) should take precedence
+        ui_settings = params.get("ui_settings", {})
+        model_overrides = params.get("override_settings", {})
+
+        # Start with UI settings
+        override_settings = ui_settings.copy() if ui_settings else {}
+        if ui_settings:
+            print(f"[TaskScheduler] Applying {len(ui_settings)} UI settings: {list(ui_settings.keys())}")
+
+        # Apply model override settings on top (these take precedence)
+        if model_overrides:
+            override_settings.update(model_overrides)
+            print(f"[TaskScheduler] Applying {len(model_overrides)} model overrides: {list(model_overrides.keys())}")
+
+        # Set checkpoint
         if task.checkpoint:
             override_settings["sd_model_checkpoint"] = task.checkpoint
-
-        # Apply captured UI settings (VAE, Clip Skip, quicksettings, etc.)
-        ui_settings = params.get("ui_settings", {})
-        if ui_settings:
-            override_settings.update(ui_settings)
-            print(f"[TaskScheduler] Applying {len(ui_settings)} UI settings: {list(ui_settings.keys())}")
 
         # Use context manager to ensure settings are restored after execution
         with temporary_settings_override(override_settings):
@@ -388,16 +396,24 @@ class TaskExecutor:
 
         params = task.params
 
-        # Build override_settings with checkpoint and UI settings
-        override_settings = params.get("override_settings", {}).copy()
+        # Build override_settings: UI settings first, then model overrides on top
+        # Model override settings (from p.override_settings) should take precedence
+        ui_settings = params.get("ui_settings", {})
+        model_overrides = params.get("override_settings", {})
+
+        # Start with UI settings
+        override_settings = ui_settings.copy() if ui_settings else {}
+        if ui_settings:
+            print(f"[TaskScheduler] Applying {len(ui_settings)} UI settings: {list(ui_settings.keys())}")
+
+        # Apply model override settings on top (these take precedence)
+        if model_overrides:
+            override_settings.update(model_overrides)
+            print(f"[TaskScheduler] Applying {len(model_overrides)} model overrides: {list(model_overrides.keys())}")
+
+        # Set checkpoint
         if task.checkpoint:
             override_settings["sd_model_checkpoint"] = task.checkpoint
-
-        # Apply captured UI settings (VAE, Clip Skip, quicksettings, etc.)
-        ui_settings = params.get("ui_settings", {})
-        if ui_settings:
-            override_settings.update(ui_settings)
-            print(f"[TaskScheduler] Applying {len(ui_settings)} UI settings: {list(ui_settings.keys())}")
 
         # Load init image(s)
         init_images = []
