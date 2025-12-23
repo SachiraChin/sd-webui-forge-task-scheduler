@@ -314,15 +314,20 @@
                             <table class="task-details-table">
                                 <tr><td>Prompt</td><td class="task-prompt-cell">${params.prompt || ''}</td></tr>
                                 <tr><td>Negative Prompt</td><td class="task-prompt-cell">${params.negative_prompt || ''}</td></tr>
+                                ${params.styles && params.styles.length > 0 ? `<tr><td>Styles</td><td>${params.styles.join(', ')}</td></tr>` : ''}
                                 <tr><td>Size</td><td>${params.width || 512} × ${params.height || 512}</td></tr>
                                 <tr><td>Steps</td><td>${params.steps || 20}</td></tr>
                                 <tr><td>CFG Scale</td><td>${params.cfg_scale || 7}</td></tr>
+                                ${params.distilled_cfg_scale !== undefined && params.distilled_cfg_scale !== null ? `<tr><td>Distilled CFG</td><td>${params.distilled_cfg_scale}</td></tr>` : ''}
                                 <tr><td>Sampler</td><td>${params.sampler_name || 'Euler'}</td></tr>
                                 <tr><td>Scheduler</td><td>${params.scheduler || 'automatic'}</td></tr>
                                 <tr><td>Seed</td><td>${params.seed || -1}</td></tr>
+                                ${params.subseed !== undefined && params.subseed !== -1 ? `<tr><td>Subseed</td><td>${params.subseed} (strength: ${params.subseed_strength || 0})</td></tr>` : ''}
                                 <tr><td>Batch Size</td><td>${params.batch_size || 1}</td></tr>
                                 <tr><td>Batch Count</td><td>${params.n_iter || 1}</td></tr>
                                 ${params.denoising_strength !== undefined ? `<tr><td>Denoising</td><td>${params.denoising_strength}</td></tr>` : ''}
+                                ${params.restore_faces ? `<tr><td>Restore Faces</td><td>Yes</td></tr>` : ''}
+                                ${params.tiling ? `<tr><td>Tiling</td><td>Yes</td></tr>` : ''}
                             </table>
                         </div>
                         ${params.override_settings && Object.keys(params.override_settings).length > 0 ? `
