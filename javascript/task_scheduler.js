@@ -21,130 +21,9 @@
         }
     }
 
-    // Inject Queue button next to Generate button
-    function injectQueueButton(tabName) {
-        const generateBtn = document.getElementById(`${tabName}_generate`);
-        if (!generateBtn) {
-            console.log(`[TaskScheduler] Generate button not found for ${tabName}`);
-            return false;
-        }
-
-        // Check if Queue button already exists
-        if (document.getElementById(`${tabName}_queue`)) {
-            return true;
-        }
-
-        // Create Queue button - copy styling from Generate button
-        const queueBtn = document.createElement('button');
-        queueBtn.id = `${tabName}_queue`;
-        queueBtn.className = generateBtn.className.replace('primary', 'secondary');
-        queueBtn.textContent = 'Queue';
-        queueBtn.title = 'Add current settings to task queue';
-        queueBtn.style.marginLeft = '8px';
-        queueBtn.style.minWidth = '80px';
-
-        // Insert after Generate button
-        generateBtn.parentNode.insertBefore(queueBtn, generateBtn.nextSibling);
-
-        // Add click handler
-        queueBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            queueTask(tabName);
-        });
-
-        console.log(`[TaskScheduler] Queue button injected for ${tabName}`);
-        return true;
-    }
-
-    // Queue a task
-    function queueTask(tabName) {
-        const queueBtn = document.getElementById(`${tabName}_queue`);
-        const originalText = queueBtn ? queueBtn.textContent : 'Queue';
-        if (queueBtn) {
-            queueBtn.textContent = 'Queuing...';
-            queueBtn.disabled = true;
-        }
-
-        const params = collectParams(tabName);
-
-        fetch('/task-scheduler/queue/' + tabName, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(params)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showNotification('Task queued successfully!', 'success');
-                refreshTaskList(); // Direct API refresh
-            } else {
-                showNotification('Failed to queue task: ' + (data.error || 'Unknown error'), 'error');
-            }
-        })
-        .catch(error => {
-            console.error('[TaskScheduler] Error queuing task:', error);
-            showNotification('Error queuing task. Check console for details.', 'error');
-        })
-        .finally(() => {
-            if (queueBtn) {
-                queueBtn.textContent = originalText;
-                queueBtn.disabled = false;
-            }
-        });
-    }
-
-    // Collect parameters from UI
-    function collectParams(tabName) {
-        const params = { extra_params: {} };
-
-        const promptEl = document.querySelector(`#${tabName}_prompt textarea`);
-        if (promptEl) params.prompt = promptEl.value || '';
-
-        const negPromptEl = document.querySelector(`#${tabName}_neg_prompt textarea`);
-        if (negPromptEl) params.negative_prompt = negPromptEl.value || '';
-
-        let stepsEl = document.querySelector(`#${tabName}_steps input[type="number"]`);
-        if (!stepsEl) stepsEl = document.querySelector(`#${tabName}_steps input`);
-        if (stepsEl) params.steps = parseInt(stepsEl.value) || 20;
-
-        let cfgEl = document.querySelector(`#${tabName}_cfg_scale input[type="number"]`);
-        if (!cfgEl) cfgEl = document.querySelector(`#${tabName}_cfg_scale input`);
-        if (cfgEl) params.cfg_scale = parseFloat(cfgEl.value) || 7.0;
-
-        let widthEl = document.querySelector(`#${tabName}_width input[type="number"]`);
-        if (!widthEl) widthEl = document.querySelector(`#${tabName}_width input`);
-        if (widthEl) params.width = parseInt(widthEl.value) || 512;
-
-        let heightEl = document.querySelector(`#${tabName}_height input[type="number"]`);
-        if (!heightEl) heightEl = document.querySelector(`#${tabName}_height input`);
-        if (heightEl) params.height = parseInt(heightEl.value) || 512;
-
-        let batchSizeEl = document.querySelector(`#${tabName}_batch_size input[type="number"]`);
-        if (!batchSizeEl) batchSizeEl = document.querySelector(`#${tabName}_batch_size input`);
-        if (batchSizeEl) params.batch_size = parseInt(batchSizeEl.value) || 1;
-
-        let batchCountEl = document.querySelector(`#${tabName}_batch_count input[type="number"]`);
-        if (!batchCountEl) batchCountEl = document.querySelector(`#${tabName}_batch_count input`);
-        if (batchCountEl) params.n_iter = parseInt(batchCountEl.value) || 1;
-
-        let seedEl = document.querySelector(`#${tabName}_seed input[type="number"]`);
-        if (!seedEl) seedEl = document.querySelector(`#${tabName}_seed input`);
-        if (seedEl) params.seed = parseInt(seedEl.value) || -1;
-
-        const samplerEl = document.querySelector(`#${tabName}_sampling select, #${tabName}_sampler select`);
-        if (samplerEl) params.sampler_name = samplerEl.value || 'Euler';
-
-        const schedulerEl = document.querySelector(`#${tabName}_scheduler select`);
-        if (schedulerEl) params.scheduler = schedulerEl.value || 'automatic';
-
-        if (tabName === 'img2img') {
-            let denoisingEl = document.querySelector(`#${tabName}_denoising_strength input`);
-            if (denoisingEl) params.extra_params.denoising_strength = parseFloat(denoisingEl.value) || 0.75;
-        }
-
-        return params;
-    }
+    // Queue buttons are now created via Gradio in task_scheduler_ui.py
+    // This provides proper binding to all 185+ generation inputs
+    // The JavaScript below handles task list updates, notifications, etc.
 
     // Show notification toast
     function showNotification(message, type) {
@@ -363,6 +242,17 @@
                 resultImages = [];
             }
 
+            // Parse script_args if it's a JSON string
+            let scriptArgs = task.script_args;
+            if (typeof scriptArgs === 'string') {
+                try { scriptArgs = JSON.parse(scriptArgs); } catch(e) { scriptArgs = []; }
+            }
+            if (!Array.isArray(scriptArgs)) {
+                scriptArgs = [];
+            }
+            // Store parsed version for use in template
+            task.script_args = scriptArgs;
+
             // Create modal
             const modal = document.createElement('div');
             modal.className = 'task-details-modal';
@@ -399,9 +289,59 @@
                                 <tr><td>Batch Size</td><td>${params.batch_size || 1}</td></tr>
                                 <tr><td>Batch Count</td><td>${params.n_iter || 1}</td></tr>
                                 ${params.denoising_strength !== undefined ? `<tr><td>Denoising</td><td>${params.denoising_strength}</td></tr>` : ''}
-                                ${params.enable_hr ? `<tr><td>Hires Fix</td><td>Enabled (${params.hr_scale}x)</td></tr>` : ''}
                             </table>
                         </div>
+                        ${params.enable_hr ? `
+                        <div class="task-details-section">
+                            <h4>Hires Fix</h4>
+                            <table class="task-details-table">
+                                <tr><td>Enabled</td><td>Yes</td></tr>
+                                <tr><td>Scale</td><td>${params.hr_scale || 2}x</td></tr>
+                                <tr><td>Upscaler</td><td>${params.hr_upscaler || 'Latent'}</td></tr>
+                                <tr><td>Steps</td><td>${params.hr_second_pass_steps || 0}</td></tr>
+                                ${params.hr_resize_x ? `<tr><td>Resize To</td><td>${params.hr_resize_x} × ${params.hr_resize_y}</td></tr>` : ''}
+                                ${params.hr_sampler_name ? `<tr><td>Sampler</td><td>${params.hr_sampler_name}</td></tr>` : ''}
+                                ${params.hr_prompt ? `<tr><td>HR Prompt</td><td class="task-prompt-cell">${params.hr_prompt}</td></tr>` : ''}
+                            </table>
+                        </div>
+                        ` : ''}
+                        ${params.extra_generation_params && Object.keys(params.extra_generation_params).length > 0 ? `
+                        <div class="task-details-section">
+                            <h4>Extension Parameters</h4>
+                            <table class="task-details-table">
+                                ${Object.entries(params.extra_generation_params).map(([key, value]) => {
+                                    let displayValue = value;
+                                    if (typeof value === 'object') {
+                                        displayValue = JSON.stringify(value, null, 2);
+                                    }
+                                    return `<tr><td>${key}</td><td class="task-prompt-cell">${displayValue}</td></tr>`;
+                                }).join('')}
+                            </table>
+                        </div>
+                        ` : ''}
+                        ${task.script_args && task.script_args.length > 0 ? `
+                        <div class="task-details-section">
+                            <h4>Captured Arguments (${task.script_args.length} total)</h4>
+                            <details class="script-args-expander">
+                                <summary class="script-args-summary">Click to expand all argument values</summary>
+                                <div class="script-args-list">
+                                    ${task.script_args.map((item, idx) => {
+                                        // Show raw JSON for debugging
+                                        let rawJson;
+                                        try {
+                                            rawJson = JSON.stringify(item, null, 2);
+                                            if (rawJson.length > 500) rawJson = rawJson.substring(0, 500) + '...';
+                                        } catch(e) {
+                                            rawJson = '[Cannot serialize]';
+                                        }
+                                        const escapedRaw = rawJson.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+                                        return '<div class="arg-item"><span class="arg-index">[' + idx + ']</span><pre class="arg-raw">' + escapedRaw + '</pre></div>';
+                                    }).join('')}
+                                </div>
+                            </details>
+                        </div>
+                        ` : ''}
                         ${task.error ? `
                         <div class="task-details-section task-error-section">
                             <h4>Error</h4>
@@ -553,28 +493,10 @@
 
     // Initialize
     function init() {
-        console.log('[TaskScheduler] Initializing...');
+        console.log('[TaskScheduler] Initializing JavaScript (Queue buttons created via Gradio)...');
 
-        let attempts = 0;
-        const maxAttempts = 60;
-
-        function tryInject() {
-            attempts++;
-            const txt2imgSuccess = injectQueueButton('txt2img');
-            const img2imgSuccess = injectQueueButton('img2img');
-
-            if (txt2imgSuccess && img2imgSuccess) {
-                console.log('[TaskScheduler] All buttons injected successfully');
-                startAutoRefresh();
-            } else if (attempts < maxAttempts) {
-                setTimeout(tryInject, 500);
-            } else {
-                console.log('[TaskScheduler] Some buttons could not be injected after max attempts');
-                startAutoRefresh();
-            }
-        }
-
-        tryInject();
+        // Start auto-refresh for task list
+        startAutoRefresh();
 
         // Add CSS for modal and animations
         const style = document.createElement('style');
@@ -587,8 +509,18 @@
                 from { transform: translateX(0); opacity: 1; }
                 to { transform: translateX(100%); opacity: 0; }
             }
+            /* Gradio Queue buttons styling */
             #txt2img_queue, #img2img_queue {
                 min-width: 80px !important;
+                white-space: nowrap !important;
+                font-weight: 500 !important;
+            }
+            /* Responsive: stack vertically on very small screens */
+            @media (max-width: 600px) {
+                #txt2img_queue, #img2img_queue {
+                    margin-top: 8px !important;
+                    width: 100% !important;
+                }
             }
 
             /* Task Details Modal */
@@ -720,6 +652,86 @@
                 padding: 2px 6px;
                 border-radius: 4px;
                 font-size: 0.85em;
+            }
+            /* Script Args Expander */
+            .script-args-expander {
+                background: rgba(33, 150, 243, 0.05);
+                border: 1px solid rgba(33, 150, 243, 0.2);
+                border-radius: 8px;
+                overflow: hidden;
+            }
+            .script-args-summary {
+                padding: 12px 16px;
+                cursor: pointer;
+                color: #2196F3;
+                font-weight: 500;
+                user-select: none;
+                transition: background 0.2s;
+            }
+            .script-args-summary:hover {
+                background: rgba(33, 150, 243, 0.1);
+            }
+            .script-args-list {
+                max-height: 400px;
+                overflow-y: auto;
+                padding: 8px;
+                background: rgba(0,0,0,0.1);
+            }
+            .arg-item {
+                display: flex;
+                gap: 10px;
+                padding: 8px 12px;
+                margin-bottom: 4px;
+                background: rgba(0,0,0,0.15);
+                border-radius: 4px;
+                align-items: flex-start;
+            }
+            .arg-index {
+                color: #9ca3af;
+                min-width: 45px;
+                flex-shrink: 0;
+                font-family: monospace;
+            }
+            .arg-raw {
+                flex: 1;
+                margin: 0;
+                padding: 4px 8px;
+                background: rgba(0,0,0,0.2);
+                border-radius: 4px;
+                font-size: 0.9em;
+                white-space: pre-wrap;
+                word-break: break-word;
+                max-height: 150px;
+                overflow-y: auto;
+            }
+            .arg-name {
+                color: #60a5fa;
+                min-width: 180px;
+                max-width: 220px;
+                flex-shrink: 0;
+                font-weight: 500;
+                word-break: break-word;
+            }
+            .arg-value {
+                flex: 1;
+                word-break: break-word;
+                color: #e5e7eb;
+            }
+            .arg-null { color: #9ca3af; font-style: italic; }
+            .arg-bool { color: #f59e0b; }
+            .arg-number { color: #10b981; }
+            .arg-image { color: #8b5cf6; }
+            .arg-converted { color: #ec4899; }
+            .arg-error { color: #ef4444; }
+            .arg-json {
+                margin: 0;
+                padding: 4px;
+                background: rgba(0,0,0,0.2);
+                border-radius: 3px;
+                font-size: 0.9em;
+                white-space: pre-wrap;
+                max-height: 100px;
+                overflow-y: auto;
             }
         `;
         document.head.appendChild(style);

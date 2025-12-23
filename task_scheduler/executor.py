@@ -126,7 +126,11 @@ class TaskExecutor:
 
     def _run_loop(self) -> None:
         """Main execution loop running in background thread."""
+        print("[TaskScheduler] Executor run loop started")
+        loop_count = 0
         while self._is_running and not self._stop_event.is_set():
+            loop_count += 1
+
             # Check if paused
             if self._is_paused:
                 time.sleep(0.5)
@@ -134,6 +138,8 @@ class TaskExecutor:
 
             # Check if Forge is busy with another generation
             if self._is_forge_busy():
+                if loop_count % 10 == 1:  # Log every 10 iterations
+                    print("[TaskScheduler] Waiting - Forge is busy")
                 time.sleep(1.0)
                 continue
 
@@ -141,12 +147,16 @@ class TaskExecutor:
             task = self._queue.get_next_task()
             if task is None:
                 # No pending tasks, wait a bit
+                if loop_count % 20 == 1:  # Log occasionally
+                    print("[TaskScheduler] No pending tasks, waiting...")
                 time.sleep(0.5)
                 continue
 
+            print(f"[TaskScheduler] Found task to execute: {task.id}")
             # Execute the task
             self._execute_task(task)
 
+        print("[TaskScheduler] Executor run loop ended")
         self._is_running = False
         self._current_task = None
 
@@ -154,9 +164,21 @@ class TaskExecutor:
         """Check if Forge is currently running a generation."""
         try:
             from modules import shared
-            # Check if there's an active job
-            return shared.state.job_count > 0 or shared.state.current_image is not None
-        except Exception:
+
+            # Check multiple indicators of active generation
+            job_count = shared.state.job_count
+            job = shared.state.job
+
+            # Only busy if there's an active job name set
+            # job_count alone can be stale
+            is_busy = bool(job) and job_count > 0
+
+            if is_busy:
+                print(f"[TaskScheduler] Forge busy: job='{job}', job_count={job_count}")
+
+            return is_busy
+        except Exception as e:
+            print(f"[TaskScheduler] Error checking Forge busy state: {e}")
             return False
 
     def _execute_task(self, task: Task) -> None:

@@ -4,7 +4,9 @@ Task Scheduler UI Integration for Stable Diffusion WebUI Forge.
 This script:
 1. Adds "Queue" button next to Generate buttons
 2. Creates "Task Queue" tab for managing queued tasks
-3. Captures all generation parameters when queuing
+3. Supports two methods for capturing parameters:
+   - gradio: Direct Gradio binding to UI components
+   - interceptor: Intercepts StableDiffusionProcessing object (like Agent Scheduler)
 """
 import gradio as gr
 from typing import Optional
@@ -17,199 +19,44 @@ ext_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ext_dir not in sys.path:
     sys.path.insert(0, ext_dir)
 
+# Add scripts directory to path for method imports
+scripts_dir = os.path.dirname(os.path.abspath(__file__))
+if scripts_dir not in sys.path:
+    sys.path.insert(0, scripts_dir)
+
 from modules import script_callbacks, shared, scripts
 from task_scheduler.models import Task, TaskStatus, TaskType
 from task_scheduler.queue_manager import get_queue_manager
 from task_scheduler.executor import get_executor
 
+# ============================================================================
+# Method Configuration
+# ============================================================================
+# Choose which method to use for capturing generation parameters:
+# - "gradio": Direct Gradio binding (captures UI component values)
+# - "interceptor": Intercepts from StableDiffusionProcessing object (like Agent Scheduler)
+QUEUE_METHOD = "interceptor"  # Change this to switch methods
 
-# Global references to UI components for updates
-_txt2img_queue_btn: Optional[gr.Button] = None
-_img2img_queue_btn: Optional[gr.Button] = None
+# Import the selected method handler
+if QUEUE_METHOD == "interceptor":
+    from method_interceptor import setup_queue_buttons as method_setup_queue_buttons
+    from method_interceptor import on_after_component as method_on_after_component
+    print("[TaskScheduler] Using INTERCEPTOR method for parameter capture")
+else:
+    from method_gradio import setup_queue_buttons as method_setup_queue_buttons
+    from method_gradio import on_after_component as method_on_after_component
+    print("[TaskScheduler] Using GRADIO method for parameter capture")
+
+# ============================================================================
+# Global UI References (for Task Queue tab only)
+# ============================================================================
 _task_list_html: Optional[gr.HTML] = None
 _queue_status_html: Optional[gr.HTML] = None
 
 
-def get_current_checkpoint() -> str:
-    """Get the currently selected checkpoint model."""
-    try:
-        return shared.opts.sd_model_checkpoint or ""
-    except Exception:
-        return ""
-
-
-def queue_txt2img_task(
-    prompt, negative_prompt, prompt_styles,
-    n_iter, batch_size, cfg_scale, distilled_cfg_scale,
-    height, width,
-    enable_hr, denoising_strength, hr_scale, hr_upscaler,
-    hr_second_pass_steps, hr_resize_x, hr_resize_y,
-    hr_checkpoint_name, hr_additional_modules,
-    hr_sampler_name, hr_scheduler, hr_prompt, hr_negative_prompt,
-    hr_cfg, hr_distilled_cfg,
-    override_settings_texts,
-    *script_args
-):
-    """Queue a txt2img generation task."""
-    queue_manager = get_queue_manager()
-
-    # Capture all parameters
-    params = {
-        "prompt": prompt,
-        "negative_prompt": negative_prompt,
-        "prompt_styles": prompt_styles,
-        "n_iter": n_iter,
-        "batch_size": batch_size,
-        "cfg_scale": cfg_scale,
-        "distilled_cfg_scale": distilled_cfg_scale,
-        "height": height,
-        "width": width,
-        "enable_hr": enable_hr,
-        "denoising_strength": denoising_strength,
-        "hr_scale": hr_scale,
-        "hr_upscaler": hr_upscaler,
-        "hr_second_pass_steps": hr_second_pass_steps,
-        "hr_resize_x": hr_resize_x,
-        "hr_resize_y": hr_resize_y,
-        "hr_checkpoint_name": hr_checkpoint_name,
-        "hr_additional_modules": hr_additional_modules if hr_additional_modules else [],
-        "hr_sampler_name": hr_sampler_name,
-        "hr_scheduler": hr_scheduler,
-        "hr_prompt": hr_prompt,
-        "hr_negative_prompt": hr_negative_prompt,
-        "hr_cfg": hr_cfg,
-        "hr_distilled_cfg": hr_distilled_cfg,
-    }
-
-    # Get sampler from shared options
-    try:
-        params["sampler_name"] = shared.opts.data.get("sampler_name", "Euler")
-        params["scheduler"] = shared.opts.data.get("scheduler", "automatic")
-        params["steps"] = shared.opts.data.get("steps", 20)
-    except Exception:
-        pass
-
-    # Capture current checkpoint
-    checkpoint = get_current_checkpoint()
-
-    # Convert script_args to list
-    script_args_list = list(script_args) if script_args else []
-
-    # Create task
-    task = queue_manager.add_task(
-        task_type=TaskType.TXT2IMG,
-        params=params,
-        checkpoint=checkpoint,
-        script_args=script_args_list,
-        name=""  # Will auto-generate from prompt
-    )
-
-    return f"Task queued: {task.get_display_name()}"
-
-
-def queue_img2img_task(
-    mode, prompt, negative_prompt, prompt_styles,
-    init_img, sketch, sketch_fg,
-    init_img_with_mask, init_img_with_mask_fg,
-    inpaint_color_sketch, inpaint_color_sketch_fg,
-    init_img_inpaint, init_mask_inpaint,
-    mask_blur, mask_alpha, inpainting_fill,
-    n_iter, batch_size, cfg_scale, distilled_cfg_scale, image_cfg_scale,
-    denoising_strength, selected_scale_tab, height, width, scale_by,
-    resize_mode, inpaint_full_res, inpaint_full_res_padding,
-    inpainting_mask_invert,
-    img2img_batch_input_dir, img2img_batch_output_dir,
-    img2img_batch_inpaint_mask_dir,
-    override_settings_texts,
-    img2img_batch_use_png_info, img2img_batch_png_info_props,
-    img2img_batch_png_info_dir, img2img_batch_source_type,
-    img2img_batch_upload,
-    *script_args
-):
-    """Queue an img2img generation task."""
-    queue_manager = get_queue_manager()
-
-    # Save init image to temp location for later loading
-    init_image_paths = []
-    temp_dir = os.path.join(ext_dir, "temp_images")
-    os.makedirs(temp_dir, exist_ok=True)
-
-    # Determine which image to use based on mode
-    image_to_save = None
-    if mode == 0 and init_img is not None:
-        image_to_save = init_img
-    elif mode == 1 and sketch is not None:
-        # Composite sketch
-        from PIL import Image
-        if sketch_fg is not None:
-            image_to_save = Image.alpha_composite(sketch.convert("RGBA"), sketch_fg.convert("RGBA"))
-        else:
-            image_to_save = sketch
-    elif mode == 2 and init_img_with_mask is not None:
-        image_to_save = init_img_with_mask
-    elif mode == 4 and init_img_inpaint is not None:
-        image_to_save = init_img_inpaint
-
-    if image_to_save is not None:
-        import uuid
-        img_filename = f"{uuid.uuid4()}.png"
-        img_path = os.path.join(temp_dir, img_filename)
-        image_to_save.save(img_path)
-        init_image_paths.append(img_path)
-
-    if not init_image_paths and mode != 5:  # mode 5 is batch
-        return "Error: No init image provided for img2img"
-
-    # Capture parameters
-    params = {
-        "mode": mode,
-        "prompt": prompt,
-        "negative_prompt": negative_prompt,
-        "prompt_styles": prompt_styles,
-        "init_images": init_image_paths,
-        "mask_blur": mask_blur,
-        "mask_alpha": mask_alpha,
-        "inpainting_fill": inpainting_fill,
-        "n_iter": n_iter,
-        "batch_size": batch_size,
-        "cfg_scale": cfg_scale,
-        "distilled_cfg_scale": distilled_cfg_scale,
-        "image_cfg_scale": image_cfg_scale,
-        "denoising_strength": denoising_strength,
-        "selected_scale_tab": selected_scale_tab,
-        "height": height,
-        "width": width,
-        "scale_by": scale_by,
-        "resize_mode": resize_mode,
-        "inpaint_full_res": inpaint_full_res,
-        "inpaint_full_res_padding": inpaint_full_res_padding,
-        "inpainting_mask_invert": inpainting_mask_invert,
-    }
-
-    # Get sampler from shared options
-    try:
-        params["sampler_name"] = shared.opts.data.get("sampler_name", "Euler")
-        params["scheduler"] = shared.opts.data.get("scheduler", "automatic")
-        params["steps"] = shared.opts.data.get("steps", 20)
-    except Exception:
-        pass
-
-    # Capture checkpoint
-    checkpoint = get_current_checkpoint()
-
-    # Convert script_args
-    script_args_list = list(script_args) if script_args else []
-
-    # Create task
-    task = queue_manager.add_task(
-        task_type=TaskType.IMG2IMG,
-        params=params,
-        checkpoint=checkpoint,
-        script_args=script_args_list,
-        name=""
-    )
-
-    return f"Task queued: {task.get_display_name()}"
+# ============================================================================
+# Task Queue Tab Rendering Functions
+# ============================================================================
 
 
 def render_task_list() -> str:
@@ -323,16 +170,22 @@ def render_queue_status() -> str:
 
 def start_queue():
     """Start processing the queue."""
+    print("[TaskScheduler] start_queue() called")
     executor = get_executor()
     queue_manager = get_queue_manager()
     stats = queue_manager.get_stats()
 
+    print(f"[TaskScheduler] Queue stats: {stats}")
+    print(f"[TaskScheduler] Executor is_running before: {executor.is_running}")
+
     # Check if there are pending tasks
     if stats['pending'] == 0:
-        # No pending tasks - still start but it will be idle
-        pass
+        print("[TaskScheduler] No pending tasks")
 
-    executor.start()
+    result = executor.start()
+    print(f"[TaskScheduler] executor.start() returned: {result}")
+    print(f"[TaskScheduler] Executor is_running after: {executor.is_running}")
+
     return render_queue_status(), render_task_list()
 
 
@@ -376,6 +229,7 @@ def create_task_queue_tab():
     """Create the Task Queue tab UI."""
     with gr.Blocks(analytics_enabled=False) as task_queue_tab:
         gr.HTML("<h2>Task Queue</h2>")
+        gr.HTML("<p style='color: var(--body-text-color-subdued); margin-bottom: 10px;'>Use the Queue buttons next to Generate in txt2img/img2img tabs to add tasks.</p>")
 
         # Status display
         queue_status = gr.HTML(
@@ -449,25 +303,27 @@ def on_ui_tabs():
 
 
 def on_after_component(component, **kwargs):
-    """Inject Queue buttons after Generate buttons."""
-    elem_id = kwargs.get("elem_id", "")
-
-    if elem_id == "txt2img_generate":
-        # Create Queue button for txt2img
-        # Note: We'll add the button via JavaScript injection instead
-        # because Gradio doesn't allow inserting components after creation
-        pass
-
-    elif elem_id == "img2img_generate":
-        # Create Queue button for img2img
-        pass
+    """
+    Delegate to the selected method handler.
+    Detect Generate buttons and create Queue buttons next to them.
+    """
+    method_on_after_component(component, **kwargs)
 
 
 def on_app_started(demo, app):
-    """Called when the app starts - register API endpoints."""
+    """Called when the app starts - register API endpoints and setup Queue buttons."""
     from task_scheduler.api import setup_api
     setup_api(app)
-    print("[TaskScheduler] Extension loaded successfully")
+
+    # Setup Queue buttons using the selected method
+    try:
+        method_setup_queue_buttons(demo)
+    except Exception as e:
+        print(f"[TaskScheduler] Error setting up Queue buttons: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print(f"[TaskScheduler] Extension loaded successfully (method: {QUEUE_METHOD})")
 
 
 # CSS styles for the task queue

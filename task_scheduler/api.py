@@ -12,6 +12,22 @@ from .models import Task, TaskStatus, TaskType
 from .queue_manager import get_queue_manager
 from .executor import get_executor
 
+# Import intercept functions from the script
+def get_intercept_functions():
+    """Get intercept functions from the queue_interceptor script."""
+    try:
+        import sys
+        import os
+        ext_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        scripts_dir = os.path.join(ext_dir, "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from queue_interceptor import set_intercept_mode, get_intercept_result, clear_intercept_mode
+        return set_intercept_mode, get_intercept_result, clear_intercept_mode
+    except Exception as e:
+        print(f"[TaskScheduler] Failed to import intercept functions: {e}")
+        return None, None, None
+
 
 class QueueTaskRequest(BaseModel):
     """Request body for queuing a task."""
@@ -71,6 +87,13 @@ def setup_api(app: FastAPI):
                 "scheduler": request.scheduler,
                 **request.extra_params
             }
+
+            # Debug logging
+            print(f"[TaskScheduler] Queuing txt2img task")
+            print(f"[TaskScheduler] extra_params received: {request.extra_params}")
+            print(f"[TaskScheduler] Final params keys: {list(params.keys())}")
+            if 'enable_hr' in params:
+                print(f"[TaskScheduler] Hires.fix enabled: {params.get('enable_hr')}")
 
             # Create task
             task = queue_manager.add_task(
@@ -183,9 +206,15 @@ def setup_api(app: FastAPI):
             if not task:
                 raise HTTPException(status_code=404, detail="Task not found")
 
+            task_dict = task.to_dict()
+            print(f"[TaskScheduler] Getting task {task_id}")
+            print(f"[TaskScheduler] Task params keys: {list(task.params.keys())}")
+            if 'enable_hr' in task.params:
+                print(f"[TaskScheduler] Task has enable_hr: {task.params.get('enable_hr')}")
+
             return JSONResponse({
                 "success": True,
-                "task": task.to_dict()
+                "task": task_dict
             })
 
         except HTTPException:
@@ -357,6 +386,84 @@ def setup_api(app: FastAPI):
                 "success": True,
                 "cleared": count,
                 "message": f"Cleared {count} tasks"
+            })
+
+        except Exception as e:
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
+    @app.post("/task-scheduler/intercept/{tab}")
+    async def set_intercept(tab: str):
+        """Set intercept mode for the next generation."""
+        try:
+            if tab not in ("txt2img", "img2img"):
+                return JSONResponse({
+                    "success": False,
+                    "error": f"Invalid tab: {tab}"
+                }, status_code=400)
+
+            set_intercept_mode, _, _ = get_intercept_functions()
+            if set_intercept_mode is None:
+                return JSONResponse({
+                    "success": False,
+                    "error": "Intercept module not available"
+                }, status_code=500)
+
+            set_intercept_mode(tab)
+
+            return JSONResponse({
+                "success": True,
+                "message": f"Intercept mode enabled for {tab}"
+            })
+
+        except Exception as e:
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
+    @app.get("/task-scheduler/intercept/result")
+    async def get_intercept_result_api():
+        """Get the result of the last interception."""
+        try:
+            _, get_result, _ = get_intercept_functions()
+            if get_result is None:
+                return JSONResponse({
+                    "success": False,
+                    "error": "Intercept module not available"
+                }, status_code=500)
+
+            result = get_result()
+
+            return JSONResponse({
+                "success": True,
+                "result": result
+            })
+
+        except Exception as e:
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
+    @app.post("/task-scheduler/intercept/clear")
+    async def clear_intercept():
+        """Clear the intercept mode."""
+        try:
+            _, _, clear_mode = get_intercept_functions()
+            if clear_mode is None:
+                return JSONResponse({
+                    "success": False,
+                    "error": "Intercept module not available"
+                }, status_code=500)
+
+            clear_mode()
+
+            return JSONResponse({
+                "success": True,
+                "message": "Intercept mode cleared"
             })
 
         except Exception as e:
