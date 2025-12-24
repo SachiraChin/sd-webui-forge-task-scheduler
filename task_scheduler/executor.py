@@ -75,6 +75,7 @@ def get_default_script_args(script_runner) -> list[Any]:
 def merge_script_args_with_defaults(script_args: list, script_runner) -> list[Any]:
     """
     Merge script_args with defaults, replacing None values with defaults.
+    Also deserializes ControlNet units if they were serialized.
 
     This is needed because some scripts (like ControlNet) have complex objects
     that can't be serialized. During queue, those are set to None, and here
@@ -85,20 +86,41 @@ def merge_script_args_with_defaults(script_args: list, script_runner) -> list[An
     if not script_args:
         return defaults
 
+    # Try to import ControlNet helper for deserialization
+    deserialize_arg = None
+    try:
+        from task_scheduler.controlnet_helper import deserialize_script_arg
+        deserialize_arg = deserialize_script_arg
+    except ImportError:
+        pass
+
     # Ensure we have enough args
     result = list(script_args)
     while len(result) < len(defaults):
         result.append(None)
 
-    # Replace None values with defaults
+    # Process args: deserialize ControlNet units and replace None with defaults
     replaced_count = 0
+    deserialized_count = 0
     for i in range(len(result)):
+        # Try to deserialize ControlNet units first
+        if deserialize_arg is not None and isinstance(result[i], dict):
+            if result[i].get('_is_controlnet_unit'):
+                deserialized = deserialize_arg(result[i])
+                if deserialized is not None:
+                    result[i] = deserialized
+                    deserialized_count += 1
+                    continue
+
+        # Replace None values with defaults
         if result[i] is None and i < len(defaults) and defaults[i] is not None:
             result[i] = defaults[i]
             replaced_count += 1
 
     if replaced_count > 0:
         print(f"[TaskScheduler] Replaced {replaced_count} None script_args with defaults")
+    if deserialized_count > 0:
+        print(f"[TaskScheduler] Deserialized {deserialized_count} ControlNet units")
 
     return result
 

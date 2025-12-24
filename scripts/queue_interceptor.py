@@ -360,9 +360,19 @@ class QueueInterceptorScript(scripts.Script):
             import traceback
             traceback.print_exc()
 
+        # Import ControlNet helper if ControlNet capture is enabled
+        controlnet_helper = None
+        if enable_controlnet:
+            try:
+                from task_scheduler.controlnet_helper import serialize_script_arg, is_controlnet_unit
+                controlnet_helper = {'serialize': serialize_script_arg, 'is_unit': is_controlnet_unit}
+                print("[TaskScheduler] ControlNet helper loaded successfully")
+            except ImportError as e:
+                print(f"[TaskScheduler] Could not load ControlNet helper: {e}")
+
         if hasattr(p, 'script_args') and p.script_args:
             for i, arg in enumerate(p.script_args):
-                # Skip args from complex scripts (like ControlNet)
+                # Skip args from complex scripts (like ControlNet) when capture is disabled
                 if i in skip_ranges:
                     script_args.append(None)
                     if script_args_labeled is not None:
@@ -378,17 +388,30 @@ class QueueInterceptorScript(scripts.Script):
 
                 # Serialize the value
                 serialized_value = None
-                try:
-                    import json
-                    json.dumps(arg)
-                    serialized_value = arg
-                except (TypeError, ValueError):
-                    if hasattr(arg, 'value'):
-                        serialized_value = arg.value
-                    elif arg is None:
+
+                # Try ControlNet serialization first if helper is available
+                if controlnet_helper and controlnet_helper['is_unit'](arg):
+                    try:
+                        serialized_value = controlnet_helper['serialize'](arg)
+                        if serialized_value:
+                            print(f"[TaskScheduler] Serialized ControlNetUnit at index {i}")
+                    except Exception as e:
+                        print(f"[TaskScheduler] Failed to serialize ControlNetUnit at {i}: {e}")
                         serialized_value = None
-                    else:
-                        serialized_value = str(arg)
+
+                # Fall back to regular serialization
+                if serialized_value is None:
+                    try:
+                        import json
+                        json.dumps(arg)
+                        serialized_value = arg
+                    except (TypeError, ValueError):
+                        if hasattr(arg, 'value'):
+                            serialized_value = arg.value
+                        elif arg is None:
+                            serialized_value = None
+                        else:
+                            serialized_value = str(arg)
 
                 # Always store raw value
                 script_args.append(serialized_value)
