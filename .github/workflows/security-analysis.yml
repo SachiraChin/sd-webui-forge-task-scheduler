@@ -105,10 +105,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # OSSF Scorecard - security best practices
+  # OSSF Scorecard - security best practices (only runs on default branch)
   scorecard:
     name: OSSF Scorecard
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
 
     steps:
       - name: Checkout repository

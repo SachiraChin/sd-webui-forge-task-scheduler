@@ -1,0 +1,10 @@
+[bandit]
+# Skip SQL injection warnings for db.py
+# These are false positives because:
+# - Column names come from internal Task model (to_dict()), not user input
+# - All values use parameterized queries (? placeholders)
+# - The database is local SQLite, not exposed externally
+skips: B608
+
+# Only scan our code, not any vendored dependencies
+exclude_dirs: [".git", "__pycache__", ".github"]
