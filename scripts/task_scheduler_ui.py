@@ -365,9 +365,11 @@ def create_task_queue_tab():
                 info="When enabled, attempts to capture ControlNet settings. May cause errors."
             )
 
-            # Sync checkbox with setting
+            # Sync checkbox with setting and save to config
             def update_controlnet_setting(value):
                 shared.opts.task_scheduler_enable_controlnet = value
+                # Save to config file so it persists and syncs with Settings page
+                shared.opts.save(shared.config_filename)
                 return value
 
             controlnet_checkbox.change(
