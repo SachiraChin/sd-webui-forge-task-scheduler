@@ -1,5 +1,8 @@
 # SD WebUI Forge Task Scheduler
 
+[![Security Analysis](https://github.com/SachiraChin/sd-webui-forge-task-scheduler/actions/workflows/security-analysis.yml/badge.svg)](https://github.com/SachiraChin/sd-webui-forge-task-scheduler/actions/workflows/security-analysis.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A task scheduling extension for Stable Diffusion WebUI Forge that allows you to queue generation tasks and process them sequentially.
 
 ---
