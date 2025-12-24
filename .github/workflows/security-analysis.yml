@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ dev, main, master ]
 
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  id-token: write
+
 jobs:
   # GitHub's official CodeQL analysis
   codeql:
