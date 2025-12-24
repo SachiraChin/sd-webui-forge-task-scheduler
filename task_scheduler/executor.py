@@ -34,6 +34,28 @@ def temporary_settings_override(override_settings: dict):
 
     print(f"[TaskScheduler] Saved {len(original_values)} original settings")
 
+    # Apply new settings before task execution
+    applied = []
+    for key, value in override_settings.items():
+        try:
+            if hasattr(shared.opts, key):
+                setattr(shared.opts, key, value)
+                applied.append(key)
+        except Exception as e:
+            print(f"[TaskScheduler] Failed to apply setting '{key}': {e}")
+
+    if applied:
+        print(f"[TaskScheduler] Applied {len(applied)} settings: {applied}")
+
+    # Handle VAE switch if needed
+    if "sd_vae" in override_settings:
+        try:
+            from modules import sd_vae
+            sd_vae.reload_vae_weights()
+            print(f"[TaskScheduler] Reloaded VAE: {override_settings['sd_vae']}")
+        except Exception as e:
+            print(f"[TaskScheduler] Failed to reload VAE: {e}")
+
     try:
         yield
     finally:
@@ -48,6 +70,15 @@ def temporary_settings_override(override_settings: dict):
 
         if restored:
             print(f"[TaskScheduler] Restored {len(restored)} settings: {restored}")
+
+        # Restore VAE if it was changed
+        if "sd_vae" in original_values:
+            try:
+                from modules import sd_vae
+                sd_vae.reload_vae_weights()
+                print(f"[TaskScheduler] Restored VAE: {original_values['sd_vae']}")
+            except Exception as e:
+                print(f"[TaskScheduler] Failed to restore VAE: {e}")
 
 
 def get_default_script_args(script_runner) -> list[Any]:

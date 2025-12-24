@@ -82,12 +82,8 @@
         const promptEscaped = (task.name || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
         // Calculate total images (batch_size * n_iter)
-        let params = task.params || {};
-        if (typeof params === 'string') {
-            try { params = JSON.parse(params); } catch(e) { params = {}; }
-        }
-        const batchSize = params.batch_size || 1;
-        const nIter = params.n_iter || 1;
+        const batchSize = task.batch_size || 1;
+        const nIter = task.n_iter || 1;
         const totalImages = batchSize * nIter;
 
         let actionsHtml = '';

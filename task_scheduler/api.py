@@ -184,7 +184,9 @@ def setup_api(app: FastAPI):
                         "name": t.get_display_name(),
                         "checkpoint": t.get_short_checkpoint(),
                         "created_at": t.created_at.isoformat() if t.created_at else None,
-                        "priority": t.priority
+                        "priority": t.priority,
+                        "batch_size": t.params.get("batch_size", 1),
+                        "n_iter": t.params.get("n_iter", 1)
                     }
                     for t in tasks
                 ]
