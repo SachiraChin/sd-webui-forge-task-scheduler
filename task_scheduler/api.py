@@ -359,13 +359,29 @@ def setup_api(app: FastAPI):
 
     @app.get("/task-scheduler/status")
     async def get_status():
-        """Get queue status."""
+        """Get queue status including button states."""
         try:
             executor = get_executor()
             status = executor.get_status()
 
+            # Calculate button states
+            is_running = status.get('is_running', False)
+            stats = status.get('queue_stats', {})
+            has_pending = stats.get('pending', 0) > 0
+            has_completed = (stats.get('completed', 0) > 0 or
+                           stats.get('failed', 0) > 0 or
+                           stats.get('cancelled', 0) > 0)
+
+            button_states = {
+                'start': not is_running and has_pending,
+                'stop': is_running,
+                'pause': is_running or has_pending,
+                'clear': has_completed,
+            }
+
             return JSONResponse({
                 "success": True,
+                "button_states": button_states,
                 **status
             })
 
@@ -464,6 +480,27 @@ def setup_api(app: FastAPI):
             return JSONResponse({
                 "success": True,
                 "message": "Intercept mode cleared"
+            })
+
+        except Exception as e:
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
+    @app.get("/task-scheduler/settings")
+    async def get_settings():
+        """Get extension settings."""
+        try:
+            from modules import shared
+
+            settings = {
+                "enable_controlnet": getattr(shared.opts, 'task_scheduler_enable_controlnet', False),
+            }
+
+            return JSONResponse({
+                "success": True,
+                "settings": settings
             })
 
         except Exception as e:

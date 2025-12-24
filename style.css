@@ -83,7 +83,7 @@
 }
 
 .task-type {
-    font-size: 0.75em;
+    font-size: 0.85em;
     font-weight: 600;
     color: var(--body-text-color-subdued);
     text-transform: uppercase;
@@ -91,15 +91,32 @@
 }
 
 .task-prompt {
-    font-size: 0.95em;
+    font-size: 1.05em;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
+/* Task Metadata Row (checkpoint + image count) */
+.task-meta {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
 .task-checkpoint {
-    font-size: 0.8em;
+    font-size: 0.9em;
     color: var(--body-text-color-subdued);
+}
+
+.task-images {
+    font-size: 0.85em;
+    color: var(--body-text-color-subdued);
+    padding: 2px 8px;
+    background: rgba(33, 150, 243, 0.1);
+    border-radius: 10px;
+    white-space: nowrap;
 }
 
 /* Task Status Badge */
@@ -149,39 +166,120 @@
 /* Task Action Buttons */
 .task-actions {
     display: flex;
-    gap: 5px;
+    gap: 6px;
     margin-left: 10px;
+    flex-shrink: 0;
 }
 
 .task-btn {
-    background: var(--button-secondary-background-fill) !important;
-    border: 1px solid var(--border-color-primary) !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     cursor: pointer;
-    font-size: 1.1em;
-    padding: 6px 10px;
+    font-size: 0.9em;
+    padding: 8px 16px !important;
     border-radius: 6px;
     transition: all 0.2s ease;
     line-height: 1;
+    height: 36px;
+    min-width: 36px;
+    white-space: nowrap;
+}
+
+.task-btn .btn-icon {
+    font-size: 1em;
+    flex-shrink: 0;
+}
+
+.task-btn .btn-text {
+    font-size: 0.9em;
+    font-weight: 500;
 }
 
 .task-btn:hover {
-    background: var(--button-secondary-background-fill-hover) !important;
-    transform: scale(1.05);
+    transform: scale(1.03);
+}
+
+/* Info button - Blue */
+.task-btn-info {
+    background: rgba(33, 150, 243, 0.15) !important;
+    border: 1px solid rgba(33, 150, 243, 0.4) !important;
+    color: #64B5F6;
 }
 
 .task-btn-info:hover {
-    background: rgba(33, 150, 243, 0.2) !important;
+    background: rgba(33, 150, 243, 0.3) !important;
     border-color: #2196F3 !important;
 }
 
-.task-btn-delete:hover {
-    background: rgba(244, 67, 54, 0.2) !important;
-    border-color: #f44336 !important;
+/* Load button - Cyan/Teal */
+.task-btn-load {
+    background: rgba(0, 188, 212, 0.15) !important;
+    border: 1px solid rgba(0, 188, 212, 0.4) !important;
+    color: #4DD0E1;
+}
+
+.task-btn-load:hover {
+    background: rgba(0, 188, 212, 0.3) !important;
+    border-color: #00BCD4 !important;
+}
+
+/* Retry button - Green */
+.task-btn-retry {
+    background: rgba(76, 175, 80, 0.15) !important;
+    border: 1px solid rgba(76, 175, 80, 0.4) !important;
+    color: #81C784;
 }
 
 .task-btn-retry:hover {
-    background: rgba(76, 175, 80, 0.2) !important;
+    background: rgba(76, 175, 80, 0.3) !important;
     border-color: #4CAF50 !important;
+}
+
+/* Delete button - Red */
+.task-btn-delete {
+    background: rgba(244, 67, 54, 0.15) !important;
+    border: 1px solid rgba(244, 67, 54, 0.4) !important;
+    color: #E57373;
+}
+
+.task-btn-delete:hover {
+    background: rgba(244, 67, 54, 0.3) !important;
+    border-color: #f44336 !important;
+}
+
+/* Responsive buttons - icon only on smaller screens */
+@media (max-width: 1200px) {
+    .task-btn {
+        padding: 8px;
+        min-width: 36px;
+        width: 36px;
+        height: 36px;
+    }
+
+    .task-btn .btn-text {
+        display: none;
+    }
+
+    .task-btn .btn-icon {
+        font-size: 1.1em;
+    }
+}
+
+/* Even smaller screens - stack actions vertically if needed */
+@media (max-width: 800px) {
+    .task-actions {
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    .task-btn {
+        padding: 6px;
+        min-width: 32px;
+        width: 32px;
+        height: 32px;
+    }
 }
 
 /* Empty State */
@@ -193,6 +291,14 @@
     background: var(--block-background-fill);
     border-radius: 8px;
     border: 2px dashed var(--border-color-primary);
+}
+
+/* Loading State */
+.task-loading {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--body-text-color-subdued);
+    font-size: 1em;
 }
 
 /* Queue Status Bar */

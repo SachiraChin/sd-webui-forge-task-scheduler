@@ -105,12 +105,13 @@ class TaskDatabase:
 
         return task
 
-    def get_task(self, task_id: str) -> Optional[Task]:
+    def get_task(self, task_id: str, expand_metadata: bool = True) -> Optional[Task]:
         """
         Get a task by ID.
 
         Args:
             task_id: The task ID.
+            expand_metadata: If True, fully deserialize script_args (for info view/execution).
 
         Returns:
             The task, or None if not found.
@@ -122,15 +123,16 @@ class TaskDatabase:
         row = cursor.fetchone()
 
         if row:
-            return Task.from_dict(dict(row))
+            return Task.from_dict(dict(row), expand_metadata=expand_metadata)
         return None
 
-    def get_all_tasks(self, include_completed: bool = True) -> List[Task]:
+    def get_all_tasks(self, include_completed: bool = True, expand_metadata: bool = False) -> List[Task]:
         """
         Get all tasks, ordered by priority and creation time.
 
         Args:
             include_completed: Whether to include completed/failed/cancelled tasks.
+            expand_metadata: If True, fully deserialize script_args. Default False for list display.
 
         Returns:
             List of tasks.
@@ -159,7 +161,7 @@ class TaskDatabase:
                 ORDER BY priority ASC, created_at ASC
             """)
 
-        return [Task.from_dict(dict(row)) for row in cursor.fetchall()]
+        return [Task.from_dict(dict(row), expand_metadata=expand_metadata) for row in cursor.fetchall()]
 
     def get_pending_tasks(self) -> List[Task]:
         """
@@ -184,7 +186,7 @@ class TaskDatabase:
         Get the next pending task to execute.
 
         Returns:
-            The next pending task, or None if queue is empty.
+            The next pending task with full metadata, or None if queue is empty.
         """
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -198,7 +200,7 @@ class TaskDatabase:
 
         row = cursor.fetchone()
         if row:
-            return Task.from_dict(dict(row))
+            return Task.from_dict(dict(row), expand_metadata=True)
         return None
 
     def update_task(self, task: Task) -> None:

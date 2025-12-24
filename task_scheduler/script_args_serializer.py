@@ -35,7 +35,6 @@ def _serialize_value(value: Any) -> Any:
         try:
             d = asdict(value)
             d['__type__'] = 'ControlNetUnit'
-            print(f"[TaskScheduler:Serializer] Serializing ControlNetUnit: enabled={d.get('enabled')}, model={d.get('model')}")
             # Handle numpy arrays in the dict
             return _serialize_value(d)
         except Exception as e:
@@ -99,7 +98,6 @@ def _deserialize_value(value: Any) -> Any:
                 # Import ControlNetUnit lazily
                 from lib_controlnet.external_code import ControlNetUnit
                 unit = ControlNetUnit.from_dict(clean_dict)
-                print(f"[TaskScheduler:Serializer] Deserialized ControlNetUnit: enabled={unit.enabled}, model={unit.model}")
                 return unit
             except ImportError:
                 print("[TaskScheduler:Serializer] ControlNet not available")

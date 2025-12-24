@@ -206,6 +206,12 @@ class QueueInterceptorScript(scripts.Script):
                 "CLIP_stop_at_last_layers",      # Clip Skip
                 "eta_noise_seed_delta",          # ENSD
                 "randn_source",                  # RNG source
+                "eta_ancestral",                 # Eta for ancestral samplers
+                "eta_ddim",                      # Eta for DDIM
+                "s_churn",                       # Sigma churn
+                "s_tmin",                        # Sigma tmin
+                "s_tmax",                        # Sigma tmax
+                "s_noise",                       # Sigma noise
             }
 
             # Get user's configured quicksettings

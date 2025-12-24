@@ -59,89 +59,13 @@ _queue_status_html: Optional[gr.HTML] = None
 # ============================================================================
 
 
-def render_task_item(task: Task, index: int) -> str:
-    """Render a single task item as HTML."""
-    status_class = f"status-{task.status.value}"
-    status_icon = {
-        TaskStatus.PENDING: "⏳",
-        TaskStatus.RUNNING: "🔄",
-        TaskStatus.COMPLETED: "✅",
-        TaskStatus.FAILED: "❌",
-        TaskStatus.CANCELLED: "🚫"
-    }.get(task.status, "")
-
-    # Truncate prompt for display
-    prompt = task.params.get("prompt", "")[:60]
-    if len(task.params.get("prompt", "")) > 60:
-        prompt += "..."
-
-    # Escape HTML in prompt for title attribute
-    prompt_escaped = task.params.get("prompt", "").replace('"', '&quot;').replace("'", "&#39;")
-
-    checkpoint_short = task.get_short_checkpoint()
-
-    # Build action buttons based on status
-    actions_html = f'<button class="task-btn task-btn-info" onclick=\'taskSchedulerAction("info", "{task.id}")\' title="View details">ℹ️</button>'
-    if task.status in (TaskStatus.FAILED, TaskStatus.CANCELLED):
-        actions_html += f'<button class="task-btn task-btn-retry" onclick=\'taskSchedulerAction("retry", "{task.id}")\' title="Retry this task">↻</button>'
-    if task.status != TaskStatus.RUNNING:
-        actions_html += f'<button class="task-btn task-btn-delete" onclick=\'taskSchedulerAction("delete", "{task.id}")\' title="Delete this task">🗑️</button>'
-
-    return f"""
-    <div class='task-item {status_class}' data-task-id='{task.id}'>
-        <div class='task-index'>{index}</div>
-        <div class='task-info'>
-            <div class='task-type'>{task.task_type.value}</div>
-            <div class='task-prompt' title="{prompt_escaped}">{prompt}</div>
-            <div class='task-checkpoint'>Model: {checkpoint_short}</div>
-        </div>
-        <div class='task-status'><span class='status-badge'>{status_icon} {task.status.value}</span></div>
-        <div class='task-actions'>{actions_html}</div>
-    </div>
-    """
-
-
 def render_task_list() -> str:
-    """Render the task list as HTML with separate Active and History sections."""
-    queue_manager = get_queue_manager()
-    tasks = queue_manager.get_all_tasks()
+    """
+    Render initial placeholder for task list.
+    JavaScript handles the actual task list rendering for consistency.
+    """
+    return "<div class='task-loading'>Loading tasks...</div>"
 
-    if not tasks:
-        return "<div class='task-empty'>No tasks in queue. Use the Queue button next to Generate to add tasks.</div>"
-
-    # Separate active (pending/running) from history (completed/failed/cancelled)
-    active_tasks = [t for t in tasks if t.status in (TaskStatus.PENDING, TaskStatus.RUNNING)]
-    history_tasks = [t for t in tasks if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)]
-
-    html_parts = []
-
-    # Active Tasks Section
-    html_parts.append("<div class='task-section task-section-active'>")
-    html_parts.append("<h3 class='task-section-header'>Active Tasks</h3>")
-    if active_tasks:
-        html_parts.append("<div class='task-list'>")
-        for i, task in enumerate(active_tasks, 1):
-            html_parts.append(render_task_item(task, i))
-        html_parts.append("</div>")
-    else:
-        html_parts.append("<div class='task-empty-small'>No active tasks</div>")
-    html_parts.append("</div>")
-
-    # History Section (collapsible)
-    html_parts.append("<div class='task-section task-section-history'>")
-    html_parts.append(f"<details class='task-history-details' {'open' if not active_tasks else ''}>")
-    html_parts.append(f"<summary class='task-section-header task-history-summary'>History ({len(history_tasks)} tasks)</summary>")
-    if history_tasks:
-        html_parts.append("<div class='task-list task-list-history'>")
-        for i, task in enumerate(history_tasks, 1):
-            html_parts.append(render_task_item(task, i))
-        html_parts.append("</div>")
-    else:
-        html_parts.append("<div class='task-empty-small'>No history</div>")
-    html_parts.append("</details>")
-    html_parts.append("</div>")
-
-    return "".join(html_parts)
 
 
 def render_queue_status() -> str:
@@ -208,12 +132,12 @@ def get_button_states():
     has_pending = stats['pending'] > 0
     has_completed = stats['completed'] > 0 or stats['failed'] > 0 or stats['cancelled'] > 0
 
-    # Start: enabled when not running
+    # Start: enabled when not running AND has pending tasks
     # Stop: enabled when running
     # Pause: enabled when running or has pending tasks
     # Clear: enabled when has completed/failed/cancelled
     return {
-        'start': not is_running,
+        'start': not is_running and has_pending,
         'stop': is_running,
         'pause': is_running or has_pending,
         'clear': has_completed,
@@ -307,14 +231,37 @@ def delete_task(task_id: str):
             gr.update(interactive=states['clear']))
 
 
+def render_settings_status() -> str:
+    """Render the settings status for top right corner."""
+    controlnet_enabled = getattr(shared.opts, 'task_scheduler_enable_controlnet', False)
+    status_class = 'enabled' if controlnet_enabled else 'disabled'
+    status_text = 'Enabled' if controlnet_enabled else 'Disabled'
+
+    return f"""
+    <div class='settings-status {status_class}'>
+        <span class='settings-label'>ControlNet Capture:</span>
+        <span class='settings-value'>{status_text}</span>
+        <span class='settings-hint'>(Edit in Settings tab)</span>
+    </div>
+    """
+
+
 def create_task_queue_tab():
     """Create the Task Queue tab UI."""
     # Get initial button states
     initial_states = get_button_states()
 
     with gr.Blocks(analytics_enabled=False) as task_queue_tab:
-        gr.HTML("<h2>Task Queue</h2>")
-        gr.HTML("<p style='color: var(--body-text-color-subdued); margin-bottom: 10px;'>Use the Queue buttons next to Generate in txt2img/img2img tabs to add tasks.</p>")
+        # Header row with title on left and settings status on right
+        with gr.Row(elem_classes=["task-queue-header-row"]):
+            with gr.Column(scale=3):
+                gr.HTML("<h2 style='margin: 0;'>Task Queue</h2>")
+                gr.HTML("<p style='color: var(--body-text-color-subdued); margin-bottom: 10px;'>Use the Queue buttons next to Generate in txt2img/img2img tabs to add tasks.</p>")
+            with gr.Column(scale=1, min_width=300):
+                settings_status = gr.HTML(
+                    value=render_settings_status(),
+                    elem_id="task_queue_settings_status"
+                )
 
         # Status display
         queue_status = gr.HTML(
@@ -355,28 +302,6 @@ def create_task_queue_tab():
             value=render_task_list(),
             elem_id="task_queue_list"
         )
-
-        # Options section
-        with gr.Accordion("Options", open=False):
-            controlnet_checkbox = gr.Checkbox(
-                label="Enable ControlNet parameter capture (experimental)",
-                value=lambda: getattr(shared.opts, 'task_scheduler_enable_controlnet', False),
-                elem_id="task_queue_controlnet_checkbox",
-                info="When enabled, attempts to capture ControlNet settings. May cause errors."
-            )
-
-            # Sync checkbox with setting and save to config
-            def update_controlnet_setting(value):
-                shared.opts.task_scheduler_enable_controlnet = value
-                # Save to config file so it persists and syncs with Settings page
-                shared.opts.save(shared.config_filename)
-                return value
-
-            controlnet_checkbox.change(
-                fn=update_controlnet_setting,
-                inputs=[controlnet_checkbox],
-                outputs=[controlnet_checkbox]
-            )
 
         # Hidden components for task actions
         task_id_input = gr.Textbox(visible=False, elem_id="task_action_id")
@@ -644,6 +569,50 @@ def add_style():
         opacity: 0.5 !important;
         cursor: not-allowed !important;
     }
+    /* Settings status in top right corner */
+    .settings-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 6px;
+        background: var(--block-background-fill);
+        border: 1px solid var(--border-color-primary);
+    }
+    .settings-status.enabled {
+        border-color: rgba(76, 175, 80, 0.5);
+        background: rgba(76, 175, 80, 0.1);
+    }
+    .settings-status.disabled {
+        border-color: rgba(158, 158, 158, 0.5);
+        background: rgba(158, 158, 158, 0.1);
+    }
+    .settings-label {
+        color: var(--body-text-color-subdued);
+    }
+    .settings-value {
+        font-weight: 600;
+    }
+    .settings-status.enabled .settings-value {
+        color: #4CAF50;
+    }
+    .settings-status.disabled .settings-value {
+        color: #9E9E9E;
+    }
+    .settings-hint {
+        color: var(--body-text-color-subdued);
+        font-style: italic;
+    }
+    /* Header row layout */
+    .task-queue-header-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+    }
+    #task_queue_settings_status {
+        display: flex;
+        justify-content: flex-end;
+    }
     </style>
     """
 
@@ -656,7 +625,7 @@ SECTION_NAME = "Task Scheduler"
 
 def on_ui_settings():
     """Register extension settings in the Settings tab."""
-    section = (SECTION_NAME, "task_scheduler")
+    section = ("task_scheduler", SECTION_NAME)
 
     shared.opts.add_option(
         "task_scheduler_enable_controlnet",

@@ -84,8 +84,21 @@ class Task:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Task":
-        """Create a Task from a database row dictionary."""
+    def from_dict(cls, data: dict, expand_metadata: bool = True) -> "Task":
+        """
+        Create a Task from a database row dictionary.
+
+        Args:
+            data: Dictionary from database row
+            expand_metadata: If True, fully deserialize script_args (for info view/execution).
+                           If False, keep script_args as empty list (for task list display).
+        """
+        # Only deserialize script_args when needed (info view, task execution)
+        if expand_metadata:
+            script_args = deserialize_script_args(data.get("script_args", ""))
+        else:
+            script_args = []
+
         return cls(
             id=data["id"],
             task_type=TaskType(data["task_type"]) if data.get("task_type") else TaskType.TXT2IMG,
@@ -96,7 +109,7 @@ class Task:
             completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
             params=json.loads(data["params"]) if data.get("params") else {},
             checkpoint=data.get("checkpoint", ""),
-            script_args=deserialize_script_args(data.get("script_args", "")),
+            script_args=script_args,
             result_images=json.loads(data["result_images"]) if data.get("result_images") else [],
             result_info=data.get("result_info", ""),
             error=data.get("error"),
