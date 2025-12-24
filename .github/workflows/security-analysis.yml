@@ -10,6 +10,7 @@ permissions:
   contents: read
   security-events: write
   actions: read
+  id-token: write
 
 jobs:
   # GitHub's official CodeQL analysis
