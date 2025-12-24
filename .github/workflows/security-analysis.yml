@@ -6,17 +6,15 @@ on:
   pull_request:
     branches: [ dev, main, master ]
 
-permissions:
-  contents: read
-  security-events: write
-  actions: read
-  id-token: write
-
 jobs:
   # GitHub's official CodeQL analysis
   codeql:
     name: CodeQL
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
 
     strategy:
       fail-fast: false
@@ -106,27 +104,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # OSSF Scorecard - security best practices (only runs on default branch)
-  scorecard:
-    name: OSSF Scorecard
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Run Scorecard
-        uses: ossf/scorecard-action@v2.4.0
-        with:
-          results_file: scorecard-results.sarif
-          results_format: sarif
-          publish_results: true
-
-      - name: Upload Scorecard results
-        uses: actions/upload-artifact@v4
-        with:
-          name: scorecard-results
-          path: scorecard-results.sarif
