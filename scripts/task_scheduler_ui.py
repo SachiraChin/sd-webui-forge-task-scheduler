@@ -637,6 +637,16 @@ def on_ui_settings():
         ).info("When enabled, attempts to capture ControlNet settings. May cause errors with some ControlNet configurations.")
     )
 
+    shared.opts.add_option(
+        "task_scheduler_output_subfolder",
+        shared.OptionInfo(
+            default="",
+            label="Output subfolder template",
+            component=gr.Textbox,
+            section=section,
+        ).info("Subfolder to append to output path. Supports datetime format: %Y-%m-%d, %H-%M-%S, etc. Example: '%Y-%m-%d/batch_%H%M%S' → '2025-12-24/batch_221530'. Leave empty to use default SD WebUI output path.")
+    )
+
 
 def get_setting(name: str, default=None):
     """Get a task scheduler setting value."""

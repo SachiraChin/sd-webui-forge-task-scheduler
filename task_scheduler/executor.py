@@ -2,14 +2,45 @@
 Task executor for running queued generation tasks.
 Handles background processing with proper thread safety for Forge.
 """
+import os
 import threading
 import time
 import traceback
+from datetime import datetime
 from typing import Optional, Callable, Any
 from contextlib import closing, contextmanager
 
 from .models import Task, TaskStatus, TaskType
 from .queue_manager import get_queue_manager, QueueManager
+
+
+def get_output_path(base_path: str) -> str:
+    """
+    Get the output path with optional subfolder from settings.
+
+    If task_scheduler_output_subfolder is set, it will be appended to base_path.
+    The subfolder template supports strftime format codes (e.g., %Y-%m-%d).
+    """
+    from modules import shared
+
+    subfolder_template = getattr(shared.opts, 'task_scheduler_output_subfolder', '')
+
+    if not subfolder_template:
+        return base_path
+
+    try:
+        # Format the template with current datetime
+        subfolder = datetime.now().strftime(subfolder_template)
+        output_path = os.path.join(base_path, subfolder)
+
+        # Create the directory if it doesn't exist
+        os.makedirs(output_path, exist_ok=True)
+
+        print(f"[TaskScheduler] Output subfolder: {subfolder}")
+        return output_path
+    except Exception as e:
+        print(f"[TaskScheduler] Error formatting subfolder template '{subfolder_template}': {e}")
+        return base_path
 
 
 @contextmanager
@@ -363,10 +394,14 @@ class TaskExecutor:
 
         # Use context manager to ensure settings are restored after execution
         with temporary_settings_override(override_settings):
+            # Get output paths with optional subfolder
+            base_samples = shared.opts.outdir_samples or shared.opts.outdir_txt2img_samples
+            base_grids = shared.opts.outdir_grids or shared.opts.outdir_txt2img_grids
+
             # Create processing object
             p = StableDiffusionProcessingTxt2Img(
-                outpath_samples=shared.opts.outdir_samples or shared.opts.outdir_txt2img_samples,
-                outpath_grids=shared.opts.outdir_grids or shared.opts.outdir_txt2img_grids,
+                outpath_samples=get_output_path(base_samples),
+                outpath_grids=get_output_path(base_grids),
                 prompt=params.get("prompt", ""),
                 negative_prompt=params.get("negative_prompt", ""),
                 styles=params.get("prompt_styles", []),
@@ -492,10 +527,14 @@ class TaskExecutor:
 
         # Use context manager to ensure settings are restored after execution
         with temporary_settings_override(override_settings):
+            # Get output paths with optional subfolder
+            base_samples = shared.opts.outdir_samples or shared.opts.outdir_img2img_samples
+            base_grids = shared.opts.outdir_grids or shared.opts.outdir_img2img_grids
+
             # Create processing object
             p = StableDiffusionProcessingImg2Img(
-                outpath_samples=shared.opts.outdir_samples or shared.opts.outdir_img2img_samples,
-                outpath_grids=shared.opts.outdir_grids or shared.opts.outdir_img2img_grids,
+                outpath_samples=get_output_path(base_samples),
+                outpath_grids=get_output_path(base_grids),
                 prompt=params.get("prompt", ""),
                 negative_prompt=params.get("negative_prompt", ""),
                 styles=params.get("prompt_styles", []),
