@@ -32,9 +32,15 @@ def get_queue_state():
             'intercept_next': False,
             'intercept_tab': None,
             'last_result': None,
+            'intercept_timestamp': None,  # When intercept was set
             'lock': threading.Lock()
         }
     return shared._task_scheduler_intercept_state
+
+
+def get_intercept_timeout() -> float:
+    """Get the intercept timeout from settings."""
+    return getattr(shared.opts, 'task_scheduler_intercept_timeout', 10.0)
 
 
 class QueueInterceptState:
@@ -44,6 +50,17 @@ class QueueInterceptState:
     def intercept_next(self):
         state = get_queue_state()
         with state['lock']:
+            # Check for timeout - auto-clear if intercept has been set too long
+            if state['intercept_next'] and state['intercept_timestamp'] is not None:
+                import time
+                elapsed = time.time() - state['intercept_timestamp']
+                timeout = get_intercept_timeout()
+                if elapsed > timeout:
+                    print(f"[TaskScheduler] Intercept mode timed out after {elapsed:.1f}s (timeout: {timeout}s), auto-clearing")
+                    state['intercept_next'] = False
+                    state['intercept_tab'] = None
+                    state['intercept_timestamp'] = None
+                    return False
             return state['intercept_next']
 
     @intercept_next.setter
@@ -51,6 +68,11 @@ class QueueInterceptState:
         state = get_queue_state()
         with state['lock']:
             state['intercept_next'] = value
+            if value:
+                import time
+                state['intercept_timestamp'] = time.time()
+            else:
+                state['intercept_timestamp'] = None
 
     @property
     def intercept_tab(self):
@@ -160,6 +182,7 @@ class QueueInterceptorScript(scripts.Script):
         """Extract all parameters from processing object and queue task."""
         from task_scheduler.queue_manager import get_queue_manager
         from task_scheduler.models import Task, TaskType
+        from task_scheduler.param_capture import get_capture_strategy
 
         queue_manager = get_queue_manager()
 
@@ -167,297 +190,26 @@ class QueueInterceptorScript(scripts.Script):
         is_img2img = hasattr(p, 'init_images') and p.init_images
         task_type = TaskType.IMG2IMG if is_img2img else TaskType.TXT2IMG
 
-        # Build comprehensive params dict from processing object
-        params = {
-            "prompt": p.prompt,
-            "negative_prompt": p.negative_prompt,
-            "styles": getattr(p, 'styles', []),
-            "seed": p.seed,
-            "subseed": p.subseed,
-            "subseed_strength": p.subseed_strength,
-            "seed_resize_from_h": p.seed_resize_from_h,
-            "seed_resize_from_w": p.seed_resize_from_w,
-            "sampler_name": p.sampler_name,
-            "scheduler": getattr(p, 'scheduler', None),
-            "batch_size": p.batch_size,
-            "n_iter": p.n_iter,
-            "steps": p.steps,
-            "cfg_scale": p.cfg_scale,
-            "distilled_cfg_scale": getattr(p, 'distilled_cfg_scale', None),
-            "width": p.width,
-            "height": p.height,
-            "restore_faces": p.restore_faces,
-            "tiling": p.tiling,
-            "do_not_save_samples": p.do_not_save_samples,
-            "do_not_save_grid": p.do_not_save_grid,
-        }
+        # Check if dynamic capture is enabled in settings
+        use_dynamic = getattr(shared.opts, 'task_scheduler_dynamic_capture', False)
 
-        # Get p.override_settings first (model overrides take precedence)
-        p_override_settings = {}
-        if hasattr(p, 'override_settings') and p.override_settings:
-            p_override_settings = dict(p.override_settings)
+        # Get the appropriate capture strategy
+        capture_strategy = get_capture_strategy(use_dynamic=use_dynamic)
+        capture_format = capture_strategy.CAPTURE_FORMAT
 
-        # Capture UI-visible settings from shared.opts
-        # Skip settings that are already in p.override_settings (model overrides win)
-        try:
-            # Start with essential settings that affect generation
-            essential_settings = {
-                "sd_vae",                        # VAE
-                "CLIP_stop_at_last_layers",      # Clip Skip
-                "eta_noise_seed_delta",          # ENSD
-                "randn_source",                  # RNG source
-                "eta_ancestral",                 # Eta for ancestral samplers
-                "eta_ddim",                      # Eta for DDIM
-                "s_churn",                       # Sigma churn
-                "s_tmin",                        # Sigma tmin
-                "s_tmax",                        # Sigma tmax
-                "s_noise",                       # Sigma noise
-            }
+        print(f"[TaskScheduler] Using {'dynamic' if use_dynamic else 'legacy'} capture strategy")
 
-            # Get user's configured quicksettings
-            user_quicksettings = set()
-            if hasattr(shared.opts, 'quick_setting_list') and shared.opts.quick_setting_list:
-                user_quicksettings = set(shared.opts.quick_setting_list)
+        # Capture all parameters
+        params, script_args, checkpoint = capture_strategy.capture(p)
 
-            # Combine both sets
-            settings_to_capture = essential_settings | user_quicksettings
-
-            # Capture values, but skip settings already in p.override_settings
-            captured_settings = {}
-            skipped_settings = []
-            for setting_name in settings_to_capture:
-                if setting_name in p_override_settings:
-                    # Skip - model override takes precedence
-                    skipped_settings.append(setting_name)
-                    continue
-                if hasattr(shared.opts, setting_name):
-                    value = getattr(shared.opts, setting_name)
-                    captured_settings[setting_name] = value
-
-            params["ui_settings"] = captured_settings
-            print(f"[TaskScheduler] Captured {len(captured_settings)} UI settings: {list(captured_settings.keys())}")
-            if skipped_settings:
-                print(f"[TaskScheduler] Skipped {len(skipped_settings)} UI settings (using model overrides): {skipped_settings}")
-        except Exception as e:
-            print(f"[TaskScheduler] Could not capture UI settings: {e}")
-
-        # Txt2img specific parameters
-        if task_type == TaskType.TXT2IMG:
-            params.update({
-                "enable_hr": getattr(p, 'enable_hr', False),
-                "denoising_strength": getattr(p, 'denoising_strength', 0.7),
-                "hr_scale": getattr(p, 'hr_scale', 2.0),
-                "hr_upscaler": getattr(p, 'hr_upscaler', None),
-                "hr_second_pass_steps": getattr(p, 'hr_second_pass_steps', 0),
-                "hr_resize_x": getattr(p, 'hr_resize_x', 0),
-                "hr_resize_y": getattr(p, 'hr_resize_y', 0),
-                "hr_checkpoint_name": getattr(p, 'hr_checkpoint_name', None),
-                "hr_sampler_name": getattr(p, 'hr_sampler_name', None),
-                "hr_scheduler": getattr(p, 'hr_scheduler', None),
-                "hr_prompt": getattr(p, 'hr_prompt', ''),
-                "hr_negative_prompt": getattr(p, 'hr_negative_prompt', ''),
-                "hr_cfg": getattr(p, 'hr_cfg', None),
-                "hr_distilled_cfg": getattr(p, 'hr_distilled_cfg', None),
-            })
-
-        # Img2img specific parameters
-        if task_type == TaskType.IMG2IMG:
-            params.update({
-                "denoising_strength": getattr(p, 'denoising_strength', 0.75),
-                "resize_mode": getattr(p, 'resize_mode', 0),
-                "image_cfg_scale": getattr(p, 'image_cfg_scale', None),
-                "mask_blur": getattr(p, 'mask_blur', 4),
-                "inpainting_fill": getattr(p, 'inpainting_fill', 0),
-                "inpaint_full_res": getattr(p, 'inpaint_full_res', False),
-                "inpaint_full_res_padding": getattr(p, 'inpaint_full_res_padding', 32),
-                "inpainting_mask_invert": getattr(p, 'inpainting_mask_invert', 0),
-            })
-
-            # Save init images to temp files
-            if hasattr(p, 'init_images') and p.init_images:
-                import uuid
-                temp_dir = os.path.join(ext_dir, "temp_images")
-                os.makedirs(temp_dir, exist_ok=True)
-
-                init_image_paths = []
-                for i, img in enumerate(p.init_images):
-                    if img is not None:
-                        img_filename = f"{uuid.uuid4()}.png"
-                        img_path = os.path.join(temp_dir, img_filename)
-                        img.save(img_path)
-                        init_image_paths.append(img_path)
-
-                params["init_images"] = init_image_paths
-
-            # Save mask if present
-            if hasattr(p, 'image_mask') and p.image_mask is not None:
-                import uuid
-                temp_dir = os.path.join(ext_dir, "temp_images")
-                os.makedirs(temp_dir, exist_ok=True)
-                mask_filename = f"mask_{uuid.uuid4()}.png"
-                mask_path = os.path.join(temp_dir, mask_filename)
-                p.image_mask.save(mask_path)
-                params["mask_path"] = mask_path
-
-        # Store the override settings we captured earlier (p.override_settings)
-        if p_override_settings:
-            params["override_settings"] = p_override_settings
-            print(f"[TaskScheduler] Captured p.override_settings: {p_override_settings}")
-
-        # Capture extra generation params (includes extension params!)
-        if hasattr(p, 'extra_generation_params') and p.extra_generation_params:
-            params["extra_generation_params"] = dict(p.extra_generation_params)
-            print(f"[TaskScheduler] Captured extra_generation_params: {list(p.extra_generation_params.keys())}")
-
-        # Get current checkpoint
-        checkpoint = shared.opts.sd_model_checkpoint or ""
-
-        # Capture script_args - this includes ALL extension settings!
-        # p.script_args contains the full list of all script arguments
-        # We need to serialize them properly (some might be Gradio components or complex objects)
-        # IMPORTANT: Keep raw script_args immutable for execution, store labeled version separately
-        script_args = []  # Raw values for execution (immutable)
-        script_args_labeled = None  # Labeled version for display only
-
-        # Check if ControlNet capture is enabled in settings
-        enable_controlnet = getattr(shared.opts, 'task_scheduler_enable_controlnet', False)
-
-        # Identify scripts with complex objects that can't be properly serialized
-        # These scripts will have their args set to None (use defaults during execution)
-        # Skip ControlNet unless explicitly enabled in settings
-        scripts_to_skip = set() if enable_controlnet else {"ControlNet", "controlnet"}
-        skip_ranges = set()  # Set of arg indices to skip
-
-        if enable_controlnet:
-            print("[TaskScheduler] ControlNet capture ENABLED - attempting to serialize ControlNet args")
-        else:
-            print("[TaskScheduler] ControlNet capture disabled - will use defaults during execution")
-
-        try:
-            from modules import scripts as scripts_module
-            script_runner = scripts_module.scripts_txt2img if task_type == TaskType.TXT2IMG else scripts_module.scripts_img2img
-            if script_runner:
-                for script in script_runner.scripts:
-                    script_title = getattr(script, 'title', lambda: '')()
-                    if script_title in scripts_to_skip:
-                        args_from = getattr(script, 'args_from', None)
-                        args_to = getattr(script, 'args_to', None)
-                        if args_from is not None and args_to is not None:
-                            for idx in range(args_from, args_to):
-                                skip_ranges.add(idx)
-                            print(f"[TaskScheduler] Skipping {script_title} args [{args_from}:{args_to}] (complex objects)")
-        except Exception as e:
-            print(f"[TaskScheduler] Error identifying scripts to skip: {e}")
-
-        # Try to get script args mapping for labels (optional plugin)
-        args_mapping = None
-        try:
-            from task_scheduler.script_args_mapper import get_cached_mapping
-            args_mapping = get_cached_mapping()
-            print(f"[TaskScheduler] Script args mapper returned: {len(args_mapping) if args_mapping else 0} mappings")
-            if args_mapping:
-                script_args_labeled = []
-            else:
-                print("[TaskScheduler] Mapper returned empty, labels will not be available")
-        except ImportError as e:
-            print(f"[TaskScheduler] Mapper import failed: {e}")
-        except Exception as e:
-            print(f"[TaskScheduler] Error loading script args mapper: {e}")
-            import traceback
-            traceback.print_exc()
-
-        # Import ControlNet helper if ControlNet capture is enabled
-        controlnet_helper = None
-        if enable_controlnet:
-            try:
-                from task_scheduler.controlnet_helper import serialize_script_arg, is_controlnet_unit
-                controlnet_helper = {'serialize': serialize_script_arg, 'is_unit': is_controlnet_unit}
-                print("[TaskScheduler] ControlNet helper loaded successfully")
-            except ImportError as e:
-                print(f"[TaskScheduler] Could not load ControlNet helper: {e}")
-
-        if hasattr(p, 'script_args') and p.script_args:
-            for i, arg in enumerate(p.script_args):
-                # Skip args from complex scripts (like ControlNet) when capture is disabled
-                if i in skip_ranges:
-                    script_args.append(None)
-                    if script_args_labeled is not None:
-                        script_args_labeled.append({
-                            "index": i,
-                            "name": f"arg_{i}",
-                            "label": f"[Skipped] Argument {i}",
-                            "script": "ControlNet",
-                            "type": "skipped",
-                            "value": None
-                        })
-                    continue
-
-                # Serialize the value
-                serialized_value = None
-
-                # Try ControlNet serialization first if helper is available
-                if controlnet_helper and controlnet_helper['is_unit'](arg):
-                    try:
-                        serialized_value = controlnet_helper['serialize'](arg)
-                        if serialized_value:
-                            print(f"[TaskScheduler] Serialized ControlNetUnit at index {i}")
-                    except Exception as e:
-                        print(f"[TaskScheduler] Failed to serialize ControlNetUnit at {i}: {e}")
-                        serialized_value = None
-
-                # Fall back to regular serialization
-                if serialized_value is None:
-                    try:
-                        import json
-                        json.dumps(arg)
-                        serialized_value = arg
-                    except (TypeError, ValueError):
-                        if hasattr(arg, 'value'):
-                            serialized_value = arg.value
-                        elif arg is None:
-                            serialized_value = None
-                        else:
-                            serialized_value = str(arg)
-
-                # Always store raw value
-                script_args.append(serialized_value)
-
-                # Build labeled entry if mapping available (for display only)
-                if script_args_labeled is not None:
-                    if args_mapping and i in args_mapping:
-                        info = args_mapping[i]
-                        script_args_labeled.append({
-                            "index": i,
-                            "name": info.get("name", f"arg_{i}"),
-                            "label": info.get("label", f"Argument {i}"),
-                            "script": info.get("script"),
-                            "type": info.get("type", "unknown"),
-                            "value": serialized_value
-                        })
-                    else:
-                        script_args_labeled.append({
-                            "index": i,
-                            "name": f"arg_{i}",
-                            "label": f"Argument {i}",
-                            "script": None,
-                            "type": "unknown",
-                            "value": serialized_value
-                        })
-
-        print(f"[TaskScheduler] Captured {len(script_args)} script_args (raw format)")
-
-        # Store labeled version in params for display (if available)
-        if script_args_labeled:
-            params["_script_args_labeled"] = script_args_labeled
-            print(f"[TaskScheduler] Stored labeled script_args for display")
-
-        # Create the task - script_args stays raw for execution
+        # Create the task
         task = queue_manager.add_task(
             task_type=task_type,
             params=params,
             checkpoint=checkpoint,
-            script_args=script_args,  # Raw values only!
-            name=""  # Will auto-generate from prompt
+            script_args=script_args,
+            name="",  # Will auto-generate from prompt
+            capture_format=capture_format
         )
 
         queue_state.last_result = f"Task queued: {task.get_display_name()}"

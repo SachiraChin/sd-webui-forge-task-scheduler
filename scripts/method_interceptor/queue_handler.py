@@ -85,37 +85,123 @@ def setup_queue_buttons(demo):
     """
     Setup Queue buttons with interceptor behavior.
     The buttons will set intercept mode and trigger Generate via JavaScript.
+    Includes proper state management to prevent stuck buttons.
     """
     global _txt2img_queue_btn, _img2img_queue_btn
 
     print("[TaskScheduler:Interceptor] Setting up Queue buttons...")
 
+    # JavaScript for handling queue button with state management
+    queue_button_js = """
+    (tabName) => {
+        const btnId = tabName + '_queue';
+        const generateBtnId = tabName + '_generate';
+        const btn = document.getElementById(btnId);
+        const generateBtn = document.getElementById(generateBtnId);
+
+        if (!btn) {
+            console.error('[TaskScheduler] Queue button not found:', btnId);
+            return [];
+        }
+
+        // Check if already processing
+        if (btn.dataset.queueState === 'processing') {
+            console.log('[TaskScheduler] Queue already processing, ignoring click');
+            return [];
+        }
+
+        // Set processing state
+        btn.dataset.queueState = 'processing';
+        btn.dataset.originalText = btn.textContent;
+        btn.textContent = 'Queueing...';
+        btn.classList.add('queue-processing');
+        btn.disabled = true;
+
+        console.log('[TaskScheduler] Triggering', tabName, 'Generate button');
+
+        // Function to reset button state
+        const resetButton = (message) => {
+            btn.dataset.queueState = '';
+            btn.textContent = btn.dataset.originalText || 'Queue';
+            btn.classList.remove('queue-processing');
+            btn.disabled = false;
+            if (message) {
+                console.log('[TaskScheduler]', message);
+            }
+        };
+
+        // Function to check intercept status
+        const checkStatus = () => {
+            fetch('/task-scheduler/intercept/status')
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success) {
+                        resetButton('Status check failed: ' + data.error);
+                        return;
+                    }
+
+                    if (data.timed_out) {
+                        resetButton('Queue timed out - please try again');
+                        // Show notification
+                        if (typeof gradio_config !== 'undefined') {
+                            console.warn('[TaskScheduler] Queue operation timed out');
+                        }
+                        return;
+                    }
+
+                    if (!data.is_active) {
+                        // Intercept completed (either success or cleared)
+                        if (data.last_result) {
+                            resetButton('Queued: ' + data.last_result);
+                        } else {
+                            resetButton('Queue completed');
+                        }
+                        return;
+                    }
+
+                    // Still active, check again
+                    if (data.remaining_seconds !== null && data.remaining_seconds > 0) {
+                        setTimeout(checkStatus, 500);
+                    } else {
+                        resetButton('Queue status unknown');
+                    }
+                })
+                .catch(err => {
+                    console.error('[TaskScheduler] Status check error:', err);
+                    resetButton('Error checking status');
+                });
+        };
+
+        // Trigger Generate button after a short delay
+        setTimeout(() => {
+            if (generateBtn) {
+                generateBtn.click();
+                // Start polling for completion
+                setTimeout(checkStatus, 300);
+            } else {
+                console.error('[TaskScheduler]', generateBtnId, 'button not found');
+                resetButton('Generate button not found');
+            }
+        }, 100);
+
+        return [];
+    }
+    """
+
     try:
         with demo:
-            # txt2img Queue button - use _js to trigger Generate after Python sets intercept mode
+            # txt2img Queue button
             if _txt2img_queue_btn:
                 def queue_txt2img():
                     set_intercept_mode("txt2img")
                     print("[TaskScheduler:Interceptor] Intercept mode set for txt2img")
+                    return "txt2img"
 
                 _txt2img_queue_btn.click(
                     fn=queue_txt2img,
                     inputs=[],
                     outputs=[],
-                    _js="""
-                    () => {
-                        console.log('[TaskScheduler:Interceptor] Triggering txt2img Generate button');
-                        setTimeout(() => {
-                            const generateBtn = document.getElementById('txt2img_generate');
-                            if (generateBtn) {
-                                generateBtn.click();
-                            } else {
-                                console.error('[TaskScheduler:Interceptor] txt2img_generate button not found');
-                            }
-                        }, 100);
-                        return [];
-                    }
-                    """
+                    _js=f"() => {{ ({queue_button_js})('txt2img'); return []; }}"
                 )
                 print("[TaskScheduler:Interceptor] txt2img Queue button configured")
 
@@ -124,25 +210,13 @@ def setup_queue_buttons(demo):
                 def queue_img2img():
                     set_intercept_mode("img2img")
                     print("[TaskScheduler:Interceptor] Intercept mode set for img2img")
+                    return "img2img"
 
                 _img2img_queue_btn.click(
                     fn=queue_img2img,
                     inputs=[],
                     outputs=[],
-                    _js="""
-                    () => {
-                        console.log('[TaskScheduler:Interceptor] Triggering img2img Generate button');
-                        setTimeout(() => {
-                            const generateBtn = document.getElementById('img2img_generate');
-                            if (generateBtn) {
-                                generateBtn.click();
-                            } else {
-                                console.error('[TaskScheduler:Interceptor] img2img_generate button not found');
-                            }
-                        }, 100);
-                        return [];
-                    }
-                    """
+                    _js=f"() => {{ ({queue_button_js})('img2img'); return []; }}"
                 )
                 print("[TaskScheduler:Interceptor] img2img Queue button configured")
 

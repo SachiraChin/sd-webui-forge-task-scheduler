@@ -647,6 +647,37 @@ def on_ui_settings():
         ).info("Subfolder to append to output path. Supports datetime format: %Y-%m-%d, %H-%M-%S, etc. Example: '%Y-%m-%d/batch_%H%M%S' → '2025-12-24/batch_221530'. Leave empty to use default SD WebUI output path.")
     )
 
+    shared.opts.add_option(
+        "task_scheduler_pause_with_state_saving",
+        shared.OptionInfo(
+            default=False,
+            label="Enable pause with state saving (experimental)",
+            component=gr.Checkbox,
+            section=section,
+        ).info("When enabled, pausing will wait for current image to finish (using Forge's stop_generating), save progress, and allow resuming from where you left off. When disabled, pause just waits for the entire current task to complete before pausing.")
+    )
+
+    shared.opts.add_option(
+        "task_scheduler_dynamic_capture",
+        shared.OptionInfo(
+            default=False,
+            label="Use dynamic parameter capture",
+            component=gr.Checkbox,
+            section=section,
+        ).info("Unchecked (default): Uses legacy hardcoded field names - stable and well-tested. Checked: Dynamically captures all serializable attributes - future-proof for new Forge fields but less tested.")
+    )
+
+    shared.opts.add_option(
+        "task_scheduler_intercept_timeout",
+        shared.OptionInfo(
+            default=10.0,
+            label="Queue intercept timeout (seconds)",
+            component=gr.Slider,
+            component_args={"minimum": 1.0, "maximum": 60.0, "step": 1.0},
+            section=section,
+        ).info("Auto-clear intercept mode if not consumed within this time. Prevents queue button from getting stuck. Increase if you have slow UI or extensions that delay processing.")
+    )
+
 
 def get_setting(name: str, default=None):
     """Get a task scheduler setting value."""
