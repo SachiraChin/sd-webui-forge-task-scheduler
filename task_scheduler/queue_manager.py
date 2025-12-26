@@ -41,7 +41,8 @@ class QueueManager:
         params: dict,
         checkpoint: str,
         script_args: list,
-        name: str = ""
+        name: str = "",
+        capture_format: str = None
     ) -> Task:
         """
         Add a new task to the queue.
@@ -52,6 +53,7 @@ class QueueManager:
             checkpoint: Checkpoint model name.
             script_args: Script/extension arguments.
             name: Optional display name.
+            capture_format: Capture format used (None=legacy, "dynamic"=dynamic).
 
         Returns:
             The created task.
@@ -63,7 +65,8 @@ class QueueManager:
             script_args=script_args,
             name=name,
             status=TaskStatus.PENDING,
-            created_at=datetime.now()
+            created_at=datetime.now(),
+            capture_format=capture_format
         )
 
         self._db.add_task(task)
@@ -119,6 +122,51 @@ class QueueManager:
         self._db.update_task_status(task_id, TaskStatus.FAILED, error=error)
         task = self._db.get_task(task_id)
         self._notify_change("task_failed", task)
+
+    def set_task_stopped(self, task_id: str, result_images: List[str] = None, result_info: str = "") -> None:
+        """Mark a task as stopped (interrupted by user)."""
+        task = self._db.get_task(task_id)
+        if task:
+            task.status = TaskStatus.STOPPED
+            task.completed_at = datetime.now()
+            if result_images:
+                task.result_images = result_images
+            if result_info:
+                task.result_info = result_info
+            self._db.update_task(task)
+            self._notify_change("task_stopped", task)
+
+    def set_task_paused(
+        self,
+        task_id: str,
+        completed_iterations: int,
+        original_n_iter: int,
+        result_images: List[str] = None,
+        result_info: str = ""
+    ) -> None:
+        """Mark a task as paused (can be resumed later)."""
+        task = self._db.get_task(task_id)
+        if task:
+            task.status = TaskStatus.PAUSED
+            task.completed_iterations = completed_iterations
+            task.original_n_iter = original_n_iter
+            if result_images:
+                task.result_images = result_images
+            if result_info:
+                task.result_info = result_info
+            self._db.update_task(task)
+            self._notify_change("task_paused", task)
+
+    def get_paused_task(self) -> Optional[Task]:
+        """Get a paused task to resume."""
+        return self._db.get_paused_task()
+
+    def resume_paused_task(self, task_id: str) -> None:
+        """Resume a paused task by setting it back to pending."""
+        task = self._db.get_task(task_id)
+        if task and task.status == TaskStatus.PAUSED:
+            self._db.update_task_status(task_id, TaskStatus.PENDING)
+            self._notify_change("task_resumed", task)
 
     def cancel_task(self, task_id: str) -> bool:
         """
@@ -198,6 +246,11 @@ class QueueManager:
         )
 
         self._db.add_task(new_task)
+
+        # Mark original task as requeued
+        original.requeued_task_id = new_task.id
+        self._db.update_task(original)
+
         self._notify_change("task_added", new_task)
 
         return new_task

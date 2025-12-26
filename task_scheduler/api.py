@@ -171,25 +171,35 @@ def setup_api(app: FastAPI):
     async def get_queue():
         """Get all tasks in the queue."""
         try:
+            from .param_capture import get_restore_strategy
+
             queue_manager = get_queue_manager()
             tasks = queue_manager.get_all_tasks()
 
+            def get_task_info(t):
+                # Get the appropriate restore strategy for this task's format
+                restore_strategy = get_restore_strategy(t.capture_format)
+
+                # Extract display info using the strategy (validates against schema)
+                display_info = restore_strategy.extract_display_info(t.params)
+
+                return {
+                    "id": t.id,
+                    "task_type": t.task_type.value,
+                    "status": t.status.value,
+                    "name": t.get_display_name(),
+                    "checkpoint": t.get_short_checkpoint(),
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                    "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+                    "priority": t.priority,
+                    "requeued_task_id": t.requeued_task_id,
+                    # Merge display info fields
+                    **display_info
+                }
+
             return JSONResponse({
                 "success": True,
-                "tasks": [
-                    {
-                        "id": t.id,
-                        "task_type": t.task_type.value,
-                        "status": t.status.value,
-                        "name": t.get_display_name(),
-                        "checkpoint": t.get_short_checkpoint(),
-                        "created_at": t.created_at.isoformat() if t.created_at else None,
-                        "priority": t.priority,
-                        "batch_size": t.params.get("batch_size", 1),
-                        "n_iter": t.params.get("n_iter", 1)
-                    }
-                    for t in tasks
-                ]
+                "tasks": [get_task_info(t) for t in tasks]
             })
 
         except Exception as e:
@@ -298,6 +308,47 @@ def setup_api(app: FastAPI):
                 "error": str(e)
             }, status_code=500)
 
+    @app.post("/task-scheduler/queue/{task_id}/run")
+    async def run_single_task(task_id: str):
+        """Run a single task immediately (without starting the full queue)."""
+        try:
+            executor = get_executor()
+
+            # Check if something is already running
+            if executor.is_running and executor._current_task is not None:
+                return JSONResponse({
+                    "success": False,
+                    "error": "Another task is already running"
+                }, status_code=400)
+
+            queue_manager = get_queue_manager()
+            task = queue_manager.get_task(task_id)
+
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            if task.status.value != "pending":
+                return JSONResponse({
+                    "success": False,
+                    "error": f"Task is not pending (status: {task.status.value})"
+                }, status_code=400)
+
+            # Run this single task
+            executor.run_single_task(task_id)
+
+            return JSONResponse({
+                "success": True,
+                "message": f"Running task: {task.get_display_name()}"
+            })
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
     @app.post("/task-scheduler/start")
     async def start_queue():
         """Start processing the queue."""
@@ -368,16 +419,19 @@ def setup_api(app: FastAPI):
 
             # Calculate button states
             is_running = status.get('is_running', False)
+            is_stopping = status.get('is_stopping', False)
+            is_paused = status.get('is_paused', False)
             stats = status.get('queue_stats', {})
-            has_pending = stats.get('pending', 0) > 0
+            has_pending = stats.get('pending', 0) > 0 or stats.get('paused', 0) > 0
             has_completed = (stats.get('completed', 0) > 0 or
                            stats.get('failed', 0) > 0 or
-                           stats.get('cancelled', 0) > 0)
+                           stats.get('cancelled', 0) > 0 or
+                           stats.get('stopped', 0) > 0)
 
             button_states = {
-                'start': not is_running and has_pending,
-                'stop': is_running,
-                'pause': is_running or has_pending,
+                'start': not is_running and has_pending and not is_stopping,
+                'stop': is_running and not is_stopping,
+                'pause': is_running and not is_stopping,
                 'clear': has_completed,
             }
 
@@ -504,6 +558,66 @@ def setup_api(app: FastAPI):
                 "success": True,
                 "settings": settings
             })
+
+        except Exception as e:
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
+    @app.get("/task-scheduler/intercept/status")
+    async def get_intercept_status():
+        """Get current intercept state for UI state management."""
+        try:
+            _, get_result, _ = get_intercept_functions()
+
+            # Import the state directly to get all info
+            try:
+                import sys
+                import os
+                ext_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                scripts_dir = os.path.join(ext_dir, "scripts")
+                if scripts_dir not in sys.path:
+                    sys.path.insert(0, scripts_dir)
+                from queue_interceptor import queue_state, get_queue_state, get_intercept_timeout
+                import time
+
+                state = get_queue_state()
+                with state['lock']:
+                    is_active = state['intercept_next']
+                    tab = state['intercept_tab']
+                    timestamp = state['intercept_timestamp']
+                    last_result = state['last_result']
+
+                    # Calculate remaining time if active
+                    remaining = None
+                    timed_out = False
+                    if is_active and timestamp is not None:
+                        timeout = get_intercept_timeout()
+                        elapsed = time.time() - timestamp
+                        remaining = max(0, timeout - elapsed)
+                        if elapsed > timeout:
+                            timed_out = True
+                            # Auto-clear timed out state
+                            state['intercept_next'] = False
+                            state['intercept_tab'] = None
+                            state['intercept_timestamp'] = None
+                            is_active = False
+
+                return JSONResponse({
+                    "success": True,
+                    "is_active": is_active,
+                    "tab": tab,
+                    "remaining_seconds": remaining,
+                    "timed_out": timed_out,
+                    "last_result": last_result
+                })
+
+            except Exception as e:
+                return JSONResponse({
+                    "success": False,
+                    "error": f"Failed to get intercept state: {str(e)}"
+                }, status_code=500)
 
         except Exception as e:
             return JSONResponse({

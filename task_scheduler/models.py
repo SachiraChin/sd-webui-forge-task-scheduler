@@ -18,6 +18,8 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    STOPPED = "stopped"  # Interrupted by user via Stop button
+    PAUSED = "paused"  # Paused mid-execution (with state saving enabled)
 
 
 class TaskType(str, Enum):
@@ -64,6 +66,16 @@ class Task:
     # Display info (for UI)
     name: str = ""  # User-friendly name/description
 
+    # Pause/resume state (for advanced pause mode)
+    completed_iterations: int = 0  # How many n_iter completed before pause
+    original_n_iter: int = 0  # Original n_iter value for calculating remaining
+
+    # Requeue tracking
+    requeued_task_id: Optional[str] = None  # ID of new task created when this was requeued
+
+    # Capture format: None = legacy (hardcoded fields), "dynamic" = new dynamic capture
+    capture_format: Optional[str] = None
+
     def to_dict(self) -> dict:
         """Convert task to a dictionary for database storage."""
         return {
@@ -81,6 +93,10 @@ class Task:
             "result_info": self.result_info,
             "error": self.error,
             "name": self.name,
+            "completed_iterations": self.completed_iterations,
+            "original_n_iter": self.original_n_iter,
+            "requeued_task_id": self.requeued_task_id,
+            "capture_format": self.capture_format,
         }
 
     @classmethod
@@ -114,6 +130,10 @@ class Task:
             result_info=data.get("result_info", ""),
             error=data.get("error"),
             name=data.get("name", ""),
+            completed_iterations=data.get("completed_iterations", 0),
+            original_n_iter=data.get("original_n_iter", 0),
+            requeued_task_id=data.get("requeued_task_id"),
+            capture_format=data.get("capture_format"),
         )
 
     def get_display_name(self) -> str:

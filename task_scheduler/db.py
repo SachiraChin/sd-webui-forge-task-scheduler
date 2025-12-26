@@ -67,7 +67,9 @@ class TaskDatabase:
                 result_images TEXT,
                 result_info TEXT,
                 error TEXT,
-                name TEXT
+                name TEXT,
+                completed_iterations INTEGER DEFAULT 0,
+                original_n_iter INTEGER DEFAULT 0
             )
         """)
 
@@ -76,6 +78,35 @@ class TaskDatabase:
             CREATE INDEX IF NOT EXISTS idx_tasks_status_priority
             ON tasks (status, priority, created_at)
         """)
+
+        conn.commit()
+
+        # Migration: add new columns if they don't exist
+        self._migrate_db(conn)
+
+    def _migrate_db(self, conn: sqlite3.Connection):
+        """Add new columns to existing databases."""
+        cursor = conn.cursor()
+
+        # Check existing columns
+        cursor.execute("PRAGMA table_info(tasks)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        # Add missing columns
+        migrations = [
+            ("completed_iterations", "INTEGER DEFAULT 0"),
+            ("original_n_iter", "INTEGER DEFAULT 0"),
+            ("requeued_task_id", "TEXT"),
+            ("capture_format", "TEXT"),
+        ]
+
+        for col_name, col_type in migrations:
+            if col_name not in existing_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE tasks ADD COLUMN {col_name} {col_type}")
+                    print(f"[TaskScheduler] Added column {col_name} to database")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
 
         conn.commit()
 
@@ -141,18 +172,26 @@ class TaskDatabase:
         cursor = conn.cursor()
 
         if include_completed:
+            # Active tasks (running/pending/paused) sorted by created_at DESC (newest first)
+            # History tasks (completed/stopped/failed/cancelled) sorted by completed_at DESC
             cursor.execute("""
                 SELECT * FROM tasks
                 ORDER BY
                     CASE status
                         WHEN 'running' THEN 0
                         WHEN 'pending' THEN 1
-                        WHEN 'completed' THEN 2
-                        WHEN 'failed' THEN 3
-                        WHEN 'cancelled' THEN 4
+                        WHEN 'paused' THEN 2
+                        WHEN 'completed' THEN 3
+                        WHEN 'stopped' THEN 4
+                        WHEN 'failed' THEN 5
+                        WHEN 'cancelled' THEN 6
                     END,
-                    priority ASC,
-                    created_at ASC
+                    CASE
+                        WHEN status IN ('completed', 'stopped', 'failed', 'cancelled') THEN completed_at
+                        ELSE NULL
+                    END DESC,
+                    created_at DESC,
+                    priority ASC
             """)
         else:
             cursor.execute("""
@@ -195,6 +234,28 @@ class TaskDatabase:
             SELECT * FROM tasks
             WHERE status = 'pending'
             ORDER BY priority ASC, created_at ASC
+            LIMIT 1
+        """)
+
+        row = cursor.fetchone()
+        if row:
+            return Task.from_dict(dict(row), expand_metadata=True)
+        return None
+
+    def get_paused_task(self) -> Optional[Task]:
+        """
+        Get a paused task to resume.
+
+        Returns:
+            The paused task with full metadata, or None if no paused tasks.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM tasks
+            WHERE status = 'paused'
+            ORDER BY started_at DESC
             LIMIT 1
         """)
 
@@ -247,8 +308,9 @@ class TaskDatabase:
 
         if status == TaskStatus.RUNNING:
             updates["started_at"] = datetime.now().isoformat()
-        elif status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+        elif status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.STOPPED):
             updates["completed_at"] = datetime.now().isoformat()
+        # PAUSED status doesn't set completed_at since it can be resumed
 
         if error is not None:
             updates["error"] = error
@@ -293,7 +355,7 @@ class TaskDatabase:
         with self._lock:
             cursor.execute("""
                 DELETE FROM tasks
-                WHERE status IN ('completed', 'failed', 'cancelled')
+                WHERE status IN ('completed', 'failed', 'cancelled', 'stopped')
             """)
             conn.commit()
             return cursor.rowcount
@@ -320,6 +382,8 @@ class TaskDatabase:
             "completed": 0,
             "failed": 0,
             "cancelled": 0,
+            "stopped": 0,
+            "paused": 0,
             "total": 0
         }
 
