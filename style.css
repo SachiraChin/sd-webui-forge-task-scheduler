@@ -13,12 +13,13 @@
 /* Individual Task Item */
 .task-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     padding: 12px;
     border-radius: 8px;
     background: var(--block-background-fill);
     border: 1px solid var(--border-color-primary);
     transition: all 0.2s ease;
+    min-height: auto;
 }
 
 .task-item:hover {
@@ -83,11 +84,8 @@
 }
 
 .task-type {
-    font-size: 0.85em;
     font-weight: 600;
-    color: var(--body-text-color-subdued);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    color: #60a5fa;
 }
 
 .task-prompt {
@@ -97,26 +95,68 @@
     text-overflow: ellipsis;
 }
 
-/* Task Metadata Row (checkpoint + image count) */
-.task-meta {
+/* Task Header Row - responsive with wrapping */
+.task-header {
     display: flex;
-    gap: 12px;
     align-items: center;
+    gap: 8px 12px;
+    margin-bottom: 4px;
     flex-wrap: wrap;
 }
 
-.task-checkpoint {
-    font-size: 0.9em;
+/* Task Metadata Row (sampler + date) */
+.task-meta {
+    display: flex;
+    gap: 8px 12px;
+    align-items: center;
+    flex-wrap: wrap;
     color: var(--body-text-color-subdued);
 }
 
-.task-images {
-    font-size: 0.85em;
-    color: var(--body-text-color-subdued);
-    padding: 2px 8px;
-    background: rgba(33, 150, 243, 0.1);
-    border-radius: 10px;
+.task-size {
+    font-family: monospace;
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.task-checkpoint {
+    color: #e5e7eb;
+    background: rgba(229, 231, 235, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.task-vae {
+    color: #f472b6;
+    background: rgba(244, 114, 182, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-images {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.task-sampler {
+    color: #a78bfa;
+}
+
+.task-date {
+    color: #9ca3af;
 }
 
 /* Task Status Badge */
@@ -439,4 +479,73 @@
 
 .task-scheduler-notification.info {
     background: #2196F3 !important;
+}
+
+/* Responsive task items for narrow screens */
+@media (max-width: 900px) {
+    .task-header,
+    .task-meta {
+        gap: 6px 8px;
+    }
+
+    .task-checkpoint {
+        max-width: 150px;
+    }
+
+    .task-vae {
+        max-width: 100px;
+    }
+}
+
+@media (max-width: 700px) {
+    .task-item {
+        flex-wrap: wrap;
+    }
+
+    .task-info {
+        width: 100%;
+        margin: 8px 0;
+    }
+
+    .task-status {
+        min-width: auto;
+    }
+
+    .task-actions {
+        margin-left: auto;
+    }
+}
+
+@media (max-width: 500px) {
+    .task-item {
+        padding: 10px;
+    }
+
+    .task-index {
+        min-width: 28px;
+        font-size: 1em;
+    }
+
+    .task-header,
+    .task-meta {
+        gap: 4px 6px;
+    }
+
+    .task-checkpoint,
+    .task-vae {
+        max-width: 100%;
+        flex-basis: 100%;
+    }
+
+    .task-status {
+        width: 100%;
+        text-align: left;
+        margin-top: 8px;
+    }
+
+    .task-actions {
+        width: 100%;
+        justify-content: flex-end;
+        margin-top: 8px;
+    }
 }

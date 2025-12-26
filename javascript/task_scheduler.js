@@ -13,6 +13,16 @@
     let lastTabWasQueue = false;
     let lastSettingsHash = '';
 
+    // Selection mode state for each list
+    let selectionMode = {
+        active: false,
+        history: false
+    };
+    let selectedTasks = {
+        active: new Set(),
+        history: new Set()
+    };
+
     // Wait for DOM to be ready
     function onReady(callback) {
         if (document.readyState === 'complete' || document.readyState === 'interactive') {
@@ -66,45 +76,132 @@
         return hash.toString();
     }
 
+    // Track if any task is currently running
+    let isAnyTaskRunning = false;
+
     // Render a single task item
-    function renderTaskItem(task, index) {
+    function renderTaskItem(task, index, listType) {
         const statusIcons = {
             'pending': '⏳',
             'running': '🔄',
             'completed': '✅',
             'failed': '❌',
-            'cancelled': '🚫'
+            'cancelled': '🚫',
+            'stopped': '⏹️',
+            'paused': '⏸️'
         };
 
         const statusClass = `status-${task.status}`;
         const statusIcon = statusIcons[task.status] || '';
-        const prompt = (task.name || '').substring(0, 60) + ((task.name || '').length > 60 ? '...' : '');
-        const promptEscaped = (task.name || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
         // Calculate total images (batch_size * n_iter)
         const batchSize = task.batch_size || 1;
         const nIter = task.n_iter || 1;
         const totalImages = batchSize * nIter;
 
-        let actionsHtml = '';
-        actionsHtml += `<button class="task-btn task-btn-info" onclick='taskSchedulerAction("info", "${task.id}")' title="View task details"><span class="btn-icon">ℹ️</span><span class="btn-text">Info</span></button>`;
-        actionsHtml += `<button class="task-btn task-btn-load" onclick='taskSchedulerAction("loadToUI", "${task.id}", "${task.task_type}")' title="Load to UI"><span class="btn-icon">📋</span><span class="btn-text">Load</span></button>`;
-        if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
-            actionsHtml += `<button class="task-btn task-btn-retry" onclick='taskSchedulerAction("retry", "${task.id}")' title="Requeue this task"><span class="btn-icon">↻</span><span class="btn-text">Retry</span></button>`;
+        // Image size info
+        const width = task.width || 512;
+        const height = task.height || 512;
+        let sizeInfo = `${width}×${height}`;
+        if (task.enable_hr && task.upscaled_width && task.upscaled_height) {
+            sizeInfo += ` → ${task.upscaled_width}×${task.upscaled_height}`;
         }
-        if (task.status !== 'running') {
-            actionsHtml += `<button class="task-btn task-btn-delete" onclick='taskSchedulerAction("delete", "${task.id}")' title="Delete this task"><span class="btn-icon">🗑️</span><span class="btn-text">Delete</span></button>`;
+
+        // Checkpoint - extract just the filename from path
+        let checkpointName = task.checkpoint || 'Default';
+        if (checkpointName.includes('/') || checkpointName.includes('\\')) {
+            checkpointName = checkpointName.split(/[/\\]/).pop();
+        }
+        // Remove extension if present
+        checkpointName = checkpointName.replace(/\.(safetensors|ckpt|pt)$/i, '');
+
+        // VAE - already just filename from API
+        const vaeInfo = task.vae ? task.vae.replace(/\.(safetensors|ckpt|pt)$/i, '') : '';
+
+        // Sampler info
+        let samplerInfo = task.sampler_name || 'Euler';
+        if (task.scheduler && task.scheduler !== 'automatic') {
+            samplerInfo += ` / ${task.scheduler}`;
+        }
+
+        // Date formatting: yyyy-MM-dd hh:mm am/pm
+        const formatDate = (isoString) => {
+            if (!isoString) return '';
+            const date = new Date(isoString);
+            const yyyy = date.getFullYear();
+            const MM = String(date.getMonth() + 1).padStart(2, '0');
+            const dd = String(date.getDate()).padStart(2, '0');
+            let hh = date.getHours();
+            const mm = String(date.getMinutes()).padStart(2, '0');
+            const ampm = hh >= 12 ? 'PM' : 'AM';
+            hh = hh % 12 || 12;
+            return `${yyyy}-${MM}-${dd} ${hh}:${mm} ${ampm}`;
+        };
+
+        // Dates for display
+        const createdDate = formatDate(task.created_at);
+        const completedDate = formatDate(task.completed_at);
+
+        // Build date display based on list type
+        let dateHtml = '';
+        if (listType === 'active') {
+            dateHtml = createdDate ? `<span class='task-date' title="Created">${createdDate}</span>` : '';
+        } else {
+            // History - show both dates
+            let dates = [];
+            if (createdDate) dates.push(`Created: ${createdDate}`);
+            if (completedDate) dates.push(`${task.status === 'completed' ? 'Completed' : task.status === 'failed' ? 'Failed' : 'Ended'}: ${completedDate}`);
+            dateHtml = dates.length ? `<span class='task-date'>${dates.join(' | ')}</span>` : '';
+        }
+
+        // Checkbox for selection mode
+        const inSelectionMode = selectionMode[listType];
+        const isSelected = selectedTasks[listType].has(task.id);
+        const checkboxHtml = inSelectionMode
+            ? `<div class='task-checkbox'><input type='checkbox' ${isSelected ? 'checked' : ''} onclick='event.stopPropagation()' onchange='taskSchedulerToggleSelect("${listType}", "${task.id}", this.checked)' /></div>`
+            : '';
+
+        // Show "Requeued" badge for history tasks that have been requeued
+        const requeuedBadge = (listType === 'history' && task.requeued_task_id)
+            ? '<span class="requeued-badge">Requeued</span>'
+            : '';
+
+        let actionsHtml = '';
+
+        // Only show individual action buttons when NOT in selection mode
+        if (!inSelectionMode) {
+            // Run button for pending tasks (disabled if any task is running)
+            if (task.status === 'pending') {
+                const runDisabled = isAnyTaskRunning ? 'disabled' : '';
+                const runClass = isAnyTaskRunning ? 'task-btn-disabled' : 'task-btn-run';
+                actionsHtml += `<button class="task-btn ${runClass}" onclick='taskSchedulerAction("run", "${task.id}")' title="Run this task now" ${runDisabled}><span class="btn-icon">▶️</span><span class="btn-text">Run</span></button>`;
+            }
+
+            actionsHtml += `<button class="task-btn task-btn-info" onclick='taskSchedulerAction("info", "${task.id}")' title="View task details"><span class="btn-icon">ℹ️</span><span class="btn-text">Info</span></button>`;
+            actionsHtml += `<button class="task-btn task-btn-load" onclick='taskSchedulerAction("loadToUI", "${task.id}", "${task.task_type}")' title="Load to UI"><span class="btn-icon">📋</span><span class="btn-text">Load</span></button>`;
+            if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled' || task.status === 'stopped') {
+                actionsHtml += `<button class="task-btn task-btn-retry" onclick='taskSchedulerAction("retry", "${task.id}")' title="Requeue this task"><span class="btn-icon">↻</span><span class="btn-text">Retry</span></button>`;
+            }
+            if (task.status !== 'running' && task.status !== 'paused') {
+                actionsHtml += `<button class="task-btn task-btn-delete" onclick='taskSchedulerAction("delete", "${task.id}")' title="Delete this task"><span class="btn-icon">🗑️</span><span class="btn-text">Delete</span></button>`;
+            }
         }
 
         return `
-        <div class='task-item ${statusClass}' data-task-id='${task.id}'>
+        <div class='task-item ${statusClass} ${isSelected ? 'selected' : ''}' data-task-id='${task.id}'>
+            ${checkboxHtml}
             <div class='task-index'>${index}</div>
             <div class='task-info'>
-                <div class='task-type'>${task.task_type}</div>
-                <div class='task-prompt' title="${promptEscaped}">${prompt}</div>
+                <div class='task-header'>
+                    <span class='task-type'>${task.task_type.toUpperCase()} ${requeuedBadge}</span>
+                    <span class='task-size'>${sizeInfo}</span>
+                    <span class='task-images'>${totalImages} img</span>
+                    <span class='task-checkpoint' title="${task.checkpoint || ''}">${checkpointName}</span>
+                    ${vaeInfo ? `<span class='task-vae' title="${task.vae}">${vaeInfo}</span>` : ''}
+                </div>
                 <div class='task-meta'>
-                    <span class='task-checkpoint'>Model: ${task.checkpoint || 'Default'}</span>
-                    <span class='task-images'>${totalImages} image${totalImages !== 1 ? 's' : ''}</span>
+                    <span class='task-sampler'>${samplerInfo}</span>
+                    ${dateHtml}
                 </div>
             </div>
             <div class='task-status'><span class='status-badge'>${statusIcon} ${task.status}</span></div>
@@ -113,40 +210,112 @@
         `;
     }
 
+    // Render selection header buttons for a list type
+    function renderSelectionHeader(listType, count) {
+        const inSelectionMode = selectionMode[listType];
+        const selectedCount = selectedTasks[listType].size;
+
+        if (inSelectionMode) {
+            // Show action buttons based on list type
+            let actionButtons = '';
+            if (listType === 'active') {
+                actionButtons = `
+                    <button class="section-btn section-btn-start" onclick='event.stopPropagation(); taskSchedulerBatchAction("active", "start")' title="Start selected tasks">
+                        <span class="btn-icon">▶️</span> Start (${selectedCount})
+                    </button>
+                    <button class="section-btn section-btn-delete" onclick='event.stopPropagation(); taskSchedulerBatchAction("active", "delete")' title="Delete selected tasks">
+                        <span class="btn-icon">🗑️</span> Delete (${selectedCount})
+                    </button>
+                `;
+            } else {
+                actionButtons = `
+                    <button class="section-btn section-btn-requeue" onclick='event.stopPropagation(); taskSchedulerBatchAction("history", "requeue")' title="Requeue selected tasks">
+                        <span class="btn-icon">↻</span> Requeue (${selectedCount})
+                    </button>
+                    <button class="section-btn section-btn-delete" onclick='event.stopPropagation(); taskSchedulerBatchAction("history", "delete")' title="Delete selected tasks">
+                        <span class="btn-icon">🗑️</span> Delete (${selectedCount})
+                    </button>
+                `;
+            }
+
+            return `
+                <div class="section-actions">
+                    <button class="section-btn section-btn-cancel" onclick='event.stopPropagation(); taskSchedulerExitSelectionMode("${listType}")' title="Cancel selection">
+                        Cancel
+                    </button>
+                    <button class="section-btn section-btn-select-all" onclick='event.stopPropagation(); taskSchedulerSelectAll("${listType}")' title="Select all">
+                        Select All
+                    </button>
+                    ${actionButtons}
+                </div>
+            `;
+        } else {
+            return `
+                <div class="section-actions">
+                    <button class="section-btn section-btn-select" onclick='event.stopPropagation(); taskSchedulerEnterSelectionMode("${listType}")' title="Select multiple tasks">
+                        Select
+                    </button>
+                </div>
+            `;
+        }
+    }
+
     // Render task list HTML with separate Active and History sections
-    function renderTaskList(tasks) {
+    function renderTaskList(tasks, activeOpen = null, historyOpen = null) {
         if (!tasks || tasks.length === 0) {
             return "<div class='task-empty'>No tasks in queue. Use the Queue button next to Generate to add tasks.</div>";
         }
 
-        // Separate active (pending/running) from history (completed/failed/cancelled)
-        const activeTasks = tasks.filter(t => t.status === 'pending' || t.status === 'running');
-        const historyTasks = tasks.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled');
+        // Separate active (pending/running/paused) from history (completed/failed/cancelled/stopped)
+        const activeTasks = tasks.filter(t => t.status === 'pending' || t.status === 'running' || t.status === 'paused');
+        const historyTasks = tasks.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled' || t.status === 'stopped');
+
+        // Clean up selected tasks that no longer exist
+        const activeIds = new Set(activeTasks.map(t => t.id));
+        const historyIds = new Set(historyTasks.map(t => t.id));
+        selectedTasks.active = new Set([...selectedTasks.active].filter(id => activeIds.has(id)));
+        selectedTasks.history = new Set([...selectedTasks.history].filter(id => historyIds.has(id)));
+
+        // Determine open state - use provided values or defaults
+        const isActiveOpen = activeOpen !== null ? activeOpen : (activeTasks.length > 0);
+        const isHistoryOpen = historyOpen !== null ? historyOpen : (activeTasks.length === 0);
 
         let html = '';
 
-        // Active Tasks Section
+        // Active Tasks Section (collapsible, open by default)
         html += "<div class='task-section task-section-active'>";
-        html += "<h3 class='task-section-header'>Active Tasks</h3>";
+        html += `<details class='task-active-details' ${isActiveOpen ? 'open' : ''}>`;
+        html += `<summary class='task-section-header task-active-summary'>
+            <span class='active-title'>Active Tasks (${activeTasks.length})</span>
+            <span class='active-actions'>
+                ${activeTasks.length > 0 ? renderSelectionHeader('active', activeTasks.length) : ''}
+            </span>
+        </summary>`;
         if (activeTasks.length > 0) {
             html += "<div class='task-list'>";
             activeTasks.forEach((task, i) => {
-                html += renderTaskItem(task, i + 1);
+                html += renderTaskItem(task, i + 1, 'active');
             });
             html += "</div>";
         } else {
             html += "<div class='task-empty-small'>No active tasks</div>";
         }
+        html += "</details>";
         html += "</div>";
 
         // History Section (collapsible)
         html += "<div class='task-section task-section-history'>";
-        html += `<details class='task-history-details' ${activeTasks.length === 0 ? 'open' : ''}>`;
-        html += `<summary class='task-section-header task-history-summary'>History (${historyTasks.length} tasks)</summary>`;
+        html += `<details class='task-history-details' ${isHistoryOpen ? 'open' : ''}>`;
+        html += `<summary class='task-section-header task-history-summary'>
+            <span class='history-title'>History (${historyTasks.length} tasks)</span>
+            <span class='history-actions'>
+                ${historyTasks.length > 0 ? renderSelectionHeader('history', historyTasks.length) : ''}
+            </span>
+        </summary>`;
         if (historyTasks.length > 0) {
             html += "<div class='task-list task-list-history'>";
             historyTasks.forEach((task, i) => {
-                html += renderTaskItem(task, i + 1);
+                html += renderTaskItem(task, i + 1, 'history');
             });
             html += "</div>";
         } else {
@@ -163,11 +332,23 @@
         const stats = status.queue_stats || {};
         let runningStatus, statusClass;
 
-        if (status.is_running) {
+        if (status.is_stopping) {
+            runningStatus = 'Stopping...';
+            statusClass = 'stopping';
+        } else if (status.is_running) {
             if (status.is_paused) {
-                runningStatus = 'Paused';
-                statusClass = 'paused';
-            } else if (stats.pending === 0 && stats.running === 0) {
+                // Check for specific pause mode in status_text
+                if (status.status_text === 'pausing_image') {
+                    runningStatus = 'Pausing after current image...';
+                    statusClass = 'pausing';
+                } else if (status.status_text === 'pausing_task') {
+                    runningStatus = 'Pausing after current task...';
+                    statusClass = 'pausing';
+                } else {
+                    runningStatus = 'Paused';
+                    statusClass = 'paused';
+                }
+            } else if (stats.pending === 0 && stats.running === 0 && stats.paused === 0) {
                 runningStatus = 'Idle (no pending tasks)';
                 statusClass = 'idle';
             } else {
@@ -201,7 +382,9 @@
             <div class='status-stats'>
                 <span class='stat pending'>⏳ ${stats.pending || 0} pending</span>
                 <span class='stat running'>🔄 ${stats.running || 0} running</span>
+                ${stats.paused ? `<span class='stat paused'>⏸️ ${stats.paused} paused</span>` : ''}
                 <span class='stat completed'>✅ ${stats.completed || 0} completed</span>
+                ${stats.stopped ? `<span class='stat stopped'>⏹️ ${stats.stopped} stopped</span>` : ''}
                 <span class='stat failed'>❌ ${stats.failed || 0} failed</span>
             </div>
         </div>
@@ -312,14 +495,23 @@
             const tasksChanged = newTasksHash !== lastTasksHash;
             const statusChanged = newStatusHash !== lastStatusHash;
 
-            // Update DOM only if changed
-            if (tasksChanged) {
+            // Update isAnyTaskRunning based on queue stats
+            const stats = statusData.queue_stats || {};
+            isAnyTaskRunning = (stats.running || 0) > 0;
+
+            // Update DOM if changed OR if forced (e.g., selection mode changed)
+            if (tasksChanged || force) {
                 lastTasksHash = newTasksHash;
                 const taskListEl = document.getElementById('task_queue_list');
                 if (taskListEl) {
                     // Find the actual HTML container inside Gradio's wrapper
                     const htmlContainer = taskListEl.querySelector('.prose') || taskListEl;
-                    htmlContainer.innerHTML = renderTaskList(tasksData.tasks);
+
+                    // Save details open/closed state before re-render
+                    const activeDetailsOpen = htmlContainer.querySelector('.task-active-details')?.open ?? true;
+                    const historyDetailsOpen = htmlContainer.querySelector('.task-history-details')?.open ?? false;
+
+                    htmlContainer.innerHTML = renderTaskList(tasksData.tasks, activeDetailsOpen, historyDetailsOpen);
                 }
             }
 
@@ -635,7 +827,166 @@
             });
         } else if (action === 'loadToUI') {
             loadTaskToUI(taskId, taskType);
+        } else if (action === 'run') {
+            fetch(`/task-scheduler/queue/${taskId}/run`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('Task started', 'success');
+                    refreshTaskList(true);
+                } else {
+                    showNotification('Failed to run task: ' + (data.error || 'Unknown error'), 'error');
+                }
+            })
+            .catch(error => {
+                console.error('[TaskScheduler] Error running task:', error);
+                showNotification('Error running task', 'error');
+            });
         }
+    };
+
+    // Selection mode functions
+    window.taskSchedulerEnterSelectionMode = function(listType) {
+        selectionMode[listType] = true;
+        selectedTasks[listType].clear();
+        refreshTaskList(true);
+    };
+
+    window.taskSchedulerExitSelectionMode = function(listType) {
+        selectionMode[listType] = false;
+        selectedTasks[listType].clear();
+        refreshTaskList(true);
+    };
+
+    window.taskSchedulerToggleSelect = function(listType, taskId, isSelected) {
+        if (isSelected) {
+            selectedTasks[listType].add(taskId);
+        } else {
+            selectedTasks[listType].delete(taskId);
+        }
+
+        // Update just the task item's selected state (no full re-render)
+        const taskItem = document.querySelector(`.task-item[data-task-id="${taskId}"]`);
+        if (taskItem) {
+            taskItem.classList.toggle('selected', isSelected);
+        }
+
+        // Update just the button counts in the section header
+        const selectedCount = selectedTasks[listType].size;
+        const section = listType === 'active' ? '.task-section-active' : '.task-section-history';
+        const sectionEl = document.querySelector(section);
+        if (sectionEl) {
+            // Update Start/Delete buttons for active, Requeue/Delete for history
+            const buttons = sectionEl.querySelectorAll('.section-btn');
+            buttons.forEach(btn => {
+                const text = btn.textContent;
+                if (text.includes('Start') || text.includes('Delete') || text.includes('Requeue')) {
+                    // Update the count in parentheses
+                    btn.innerHTML = btn.innerHTML.replace(/\(\d+\)/, `(${selectedCount})`);
+                }
+            });
+        }
+    };
+
+    window.taskSchedulerSelectAll = function(listType) {
+        // Get all task IDs from the current list
+        const listEl = document.querySelector(listType === 'active' ? '.task-section-active .task-list' : '.task-list-history');
+        if (listEl) {
+            const taskItems = listEl.querySelectorAll('.task-item');
+            taskItems.forEach(item => {
+                const taskId = item.dataset.taskId;
+                if (taskId) {
+                    selectedTasks[listType].add(taskId);
+                    item.classList.add('selected');
+                    // Check the checkbox
+                    const checkbox = item.querySelector('input[type="checkbox"]');
+                    if (checkbox) checkbox.checked = true;
+                }
+            });
+
+            // Update button counts
+            const selectedCount = selectedTasks[listType].size;
+            const section = listType === 'active' ? '.task-section-active' : '.task-section-history';
+            const sectionEl = document.querySelector(section);
+            if (sectionEl) {
+                const buttons = sectionEl.querySelectorAll('.section-btn');
+                buttons.forEach(btn => {
+                    const text = btn.textContent;
+                    if (text.includes('Start') || text.includes('Delete') || text.includes('Requeue')) {
+                        btn.innerHTML = btn.innerHTML.replace(/\(\d+\)/, `(${selectedCount})`);
+                    }
+                });
+            }
+        }
+    };
+
+    window.taskSchedulerBatchAction = async function(listType, action) {
+        const taskIds = Array.from(selectedTasks[listType]);
+
+        if (taskIds.length === 0) {
+            showNotification('No tasks selected', 'warning');
+            return;
+        }
+
+        // Confirm for delete action
+        if (action === 'delete') {
+            if (!confirm(`Delete ${taskIds.length} selected task(s)?`)) {
+                return;
+            }
+        }
+
+        let successCount = 0;
+        let errorCount = 0;
+
+        // Process each task
+        for (const taskId of taskIds) {
+            try {
+                let response;
+                if (action === 'delete') {
+                    response = await fetch(`/task-scheduler/queue/${taskId}`, { method: 'DELETE' });
+                } else if (action === 'requeue') {
+                    response = await fetch(`/task-scheduler/queue/${taskId}/retry`, { method: 'POST' });
+                } else if (action === 'start') {
+                    response = await fetch(`/task-scheduler/queue/${taskId}/run`, { method: 'POST' });
+                    // Only one task can be started at a time, so break after first success
+                    const data = await response.json();
+                    if (data.success) {
+                        successCount++;
+                        showNotification('Task started', 'success');
+                        break;
+                    } else {
+                        errorCount++;
+                    }
+                    continue;
+                }
+
+                const data = await response.json();
+                if (data.success) {
+                    successCount++;
+                } else {
+                    errorCount++;
+                }
+            } catch (error) {
+                console.error(`[TaskScheduler] Error processing task ${taskId}:`, error);
+                errorCount++;
+            }
+        }
+
+        // Show result notification
+        if (action !== 'start') {
+            if (errorCount === 0) {
+                showNotification(`${successCount} task(s) ${action === 'delete' ? 'deleted' : 'requeued'}`, 'success');
+            } else if (successCount > 0) {
+                showNotification(`${successCount} succeeded, ${errorCount} failed`, 'warning');
+            } else {
+                showNotification(`Failed to ${action} tasks`, 'error');
+            }
+        }
+
+        // Exit selection mode and refresh
+        selectionMode[listType] = false;
+        selectedTasks[listType].clear();
+        refreshTaskList(true);
     };
 
     // Build generation info string from task params (PNG metadata format)
@@ -764,7 +1115,19 @@
                 await new Promise(resolve => setTimeout(resolve, 300));
 
                 // Handle checkpoint and VAE separately (paste doesn't switch these)
-                await setCheckpointAndVAE(task.checkpoint, params.ui_settings);
+                // VAE priority: forge_additional_modules > override_settings > ui_settings
+                let vae = '';
+                const forgeModules = params.ui_settings && params.ui_settings.forge_additional_modules;
+                if (forgeModules && forgeModules.length > 0) {
+                    // Extract filename from full path
+                    const modulePath = forgeModules[0];
+                    vae = modulePath.split(/[/\\]/).pop() || '';
+                }
+                if (!vae) {
+                    vae = (params.override_settings && params.override_settings.sd_vae) ||
+                          (params.ui_settings && params.ui_settings.sd_vae) || '';
+                }
+                await setCheckpointAndVAE(task.checkpoint, vae);
 
                 showNotification(`Loaded ${taskType} parameters to UI`, 'success');
             } else {
@@ -782,7 +1145,7 @@
     }
 
     // Set checkpoint and VAE using WebUI's internal functions
-    async function setCheckpointAndVAE(checkpoint, uiSettings) {
+    async function setCheckpointAndVAE(checkpoint, vae) {
         try {
             let needsChange = false;
 
@@ -798,11 +1161,11 @@
             }
 
             // Use WebUI's selectVAE function
-            if (uiSettings && uiSettings.sd_vae && uiSettings.sd_vae !== 'Automatic' && uiSettings.sd_vae !== 'None') {
+            if (vae && vae !== 'Automatic' && vae !== 'None') {
                 if (typeof selectVAE === 'function') {
-                    selectVAE(uiSettings.sd_vae);
+                    selectVAE(vae);
                     needsChange = true;
-                    console.log('[TaskScheduler] Called selectVAE:', uiSettings.sd_vae);
+                    console.log('[TaskScheduler] Called selectVAE:', vae);
                 } else {
                     console.warn('[TaskScheduler] selectVAE function not available');
                 }
@@ -974,6 +1337,31 @@
                 min-width: 80px !important;
                 white-space: nowrap !important;
                 font-weight: 500 !important;
+                transition: all 0.2s ease !important;
+            }
+            /* Queue button processing state */
+            #txt2img_queue.queue-processing,
+            #img2img_queue.queue-processing {
+                opacity: 0.7 !important;
+                cursor: wait !important;
+                position: relative !important;
+            }
+            #txt2img_queue.queue-processing::after,
+            #img2img_queue.queue-processing::after {
+                content: '' !important;
+                position: absolute !important;
+                top: 50% !important;
+                right: 8px !important;
+                width: 12px !important;
+                height: 12px !important;
+                margin-top: -6px !important;
+                border: 2px solid transparent !important;
+                border-top-color: currentColor !important;
+                border-radius: 50% !important;
+                animation: queueSpinner 0.8s linear infinite !important;
+            }
+            @keyframes queueSpinner {
+                to { transform: rotate(360deg); }
             }
             /* Responsive: stack vertically on very small screens */
             @media (max-width: 600px) {
@@ -1126,6 +1514,24 @@
             .status-badge-mini.status-completed { background: rgba(76, 175, 80, 0.2); color: #4CAF50; }
             .status-badge-mini.status-failed { background: rgba(244, 67, 54, 0.2); color: #f44336; }
             .status-badge-mini.status-cancelled { background: rgba(158, 158, 158, 0.2); color: #9E9E9E; }
+            .status-badge-mini.status-stopped { background: rgba(255, 87, 34, 0.2); color: #FF5722; }
+            .status-badge-mini.status-paused { background: rgba(156, 39, 176, 0.2); color: #9C27B0; }
+            /* Queue status indicator colors */
+            .queue-status .status-indicator.stopping { background: #FF5722; animation: pulse 0.5s infinite; }
+            .queue-status .status-indicator.pausing { background: #9C27B0; animation: pulse 0.5s infinite; }
+            .queue-status .status-indicator.paused { background: #9C27B0; }
+            .queue-status.stopping { border-color: rgba(255, 87, 34, 0.5); }
+            .queue-status.pausing { border-color: rgba(156, 39, 176, 0.5); }
+            .queue-status.paused { border-color: rgba(156, 39, 176, 0.5); }
+            @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.5; }
+            }
+            /* Task item status colors */
+            .task-item.status-stopped { border-left-color: #FF5722; }
+            .task-item.status-paused { border-left-color: #9C27B0; }
+            .stat.stopped { color: #FF5722; }
+            .stat.paused { color: #9C27B0; }
             code {
                 background: rgba(0,0,0,0.2);
                 padding: 2px 6px;
@@ -1266,6 +1672,49 @@
                 background: linear-gradient(135deg, rgba(33, 150, 243, 0.15), rgba(76, 175, 80, 0.15));
                 border-left: 3px solid #2196F3;
             }
+            /* Active Tasks collapsible */
+            .task-active-details {
+                background: var(--block-background-fill, #1f2937);
+                border-radius: 8px;
+                overflow: hidden;
+            }
+            .task-active-summary {
+                cursor: pointer;
+                user-select: none;
+                margin: 0;
+                background: linear-gradient(135deg, rgba(33, 150, 243, 0.15), rgba(76, 175, 80, 0.15));
+                border-left: 3px solid #2196F3;
+                display: flex !important;
+                justify-content: space-between;
+                align-items: center;
+                list-style: none;
+            }
+            .task-active-summary::-webkit-details-marker {
+                display: none;
+            }
+            .task-active-summary::marker {
+                display: none;
+                content: "";
+            }
+            .task-active-summary:hover {
+                background: linear-gradient(135deg, rgba(33, 150, 243, 0.25), rgba(76, 175, 80, 0.25));
+            }
+            .active-title {
+                flex: 1;
+            }
+            .active-title::before {
+                content: "▶ ";
+                font-size: 0.8em;
+                margin-right: 4px;
+            }
+            .task-active-details[open] .active-title::before {
+                content: "▼ ";
+            }
+            .active-actions {
+                display: flex;
+                align-items: center;
+            }
+            /* History collapsible */
             .task-history-details {
                 background: var(--block-background-fill, #1f2937);
                 border-radius: 8px;
@@ -1277,15 +1726,135 @@
                 margin: 0;
                 background: rgba(158, 158, 158, 0.1);
                 border-left: 3px solid #9E9E9E;
+                display: flex !important;
+                justify-content: space-between;
+                align-items: center;
+                list-style: none;
+            }
+            .task-history-summary::-webkit-details-marker {
+                display: none;
+            }
+            .task-history-summary::marker {
+                display: none;
+                content: "";
             }
             .task-history-summary:hover {
                 background: rgba(158, 158, 158, 0.2);
+            }
+            .history-title {
+                flex: 1;
+            }
+            .history-title::before {
+                content: "▶ ";
+                font-size: 0.8em;
+                margin-right: 4px;
+            }
+            .task-history-details[open] .history-title::before {
+                content: "▼ ";
+            }
+            .history-actions {
+                display: flex;
+                align-items: center;
             }
             .task-list-history {
                 padding-top: 8px;
             }
             .task-list-history .task-item {
                 opacity: 0.8;
+            }
+            /* Selection mode styles */
+            .task-section-header-row {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 8px 12px;
+                background: var(--block-background-fill, #1f2937);
+                border-radius: 6px;
+                margin-bottom: 8px;
+            }
+            .task-section-header-row .task-section-header {
+                margin: 0;
+                padding: 0;
+                background: none;
+                border-radius: 0;
+            }
+            .task-section-active .task-section-header-row {
+                background: linear-gradient(135deg, rgba(33, 150, 243, 0.15), rgba(76, 175, 80, 0.15));
+                border-left: 3px solid #2196F3;
+            }
+            .section-actions {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+            }
+            .section-btn {
+                padding: 4px 10px;
+                border: 1px solid var(--border-color-primary, #374151);
+                border-radius: 4px;
+                background: var(--button-secondary-background-fill, #374151);
+                color: var(--body-text-color, #fff);
+                cursor: pointer;
+                font-size: 0.85em;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                transition: all 0.2s ease;
+            }
+            .section-btn:hover {
+                background: var(--button-secondary-background-fill-hover, #4b5563);
+            }
+            .section-btn-select {
+                background: rgba(33, 150, 243, 0.2);
+                border-color: rgba(33, 150, 243, 0.5);
+            }
+            .section-btn-select:hover {
+                background: rgba(33, 150, 243, 0.3);
+            }
+            .section-btn-cancel {
+                background: rgba(158, 158, 158, 0.2);
+                border-color: rgba(158, 158, 158, 0.5);
+            }
+            .section-btn-select-all {
+                background: rgba(156, 39, 176, 0.2);
+                border-color: rgba(156, 39, 176, 0.5);
+            }
+            .section-btn-start {
+                background: rgba(76, 175, 80, 0.2);
+                border-color: rgba(76, 175, 80, 0.5);
+            }
+            .section-btn-start:hover {
+                background: rgba(76, 175, 80, 0.3);
+            }
+            .section-btn-requeue {
+                background: rgba(255, 152, 0, 0.2);
+                border-color: rgba(255, 152, 0, 0.5);
+            }
+            .section-btn-requeue:hover {
+                background: rgba(255, 152, 0, 0.3);
+            }
+            .section-btn-delete {
+                background: rgba(244, 67, 54, 0.2);
+                border-color: rgba(244, 67, 54, 0.5);
+            }
+            .section-btn-delete:hover {
+                background: rgba(244, 67, 54, 0.3);
+            }
+            /* Task checkbox */
+            .task-checkbox {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin-right: 8px;
+            }
+            .task-checkbox input[type="checkbox"] {
+                width: 18px;
+                height: 18px;
+                cursor: pointer;
+                accent-color: #2196F3;
+            }
+            .task-item.selected {
+                background: rgba(33, 150, 243, 0.15) !important;
+                border-color: rgba(33, 150, 243, 0.5) !important;
             }
             .task-empty-small {
                 text-align: center;
@@ -1327,6 +1896,20 @@
                 color: var(--body-text-color-subdued, #9ca3af);
                 font-style: italic;
             }
+            /* Run button styles */
+            .task-btn-run {
+                background: rgba(76, 175, 80, 0.15) !important;
+                border-color: rgba(76, 175, 80, 0.5) !important;
+                color: #4CAF50 !important;
+            }
+            .task-btn-run:hover {
+                background: rgba(76, 175, 80, 0.3) !important;
+            }
+            .task-btn-disabled {
+                opacity: 0.5 !important;
+                cursor: not-allowed !important;
+                pointer-events: none !important;
+            }
             /* Header row with title on left and settings on right */
             .task-queue-header-row {
                 display: flex;
@@ -1336,6 +1919,86 @@
             }
             .task-queue-header-row h2 {
                 margin: 0;
+            }
+            /* Requeued badge for history tasks */
+            .requeued-badge {
+                display: inline-block;
+                padding: 2px 6px;
+                margin-left: 6px;
+                font-size: 0.75em;
+                font-weight: 500;
+                background: rgba(156, 39, 176, 0.2);
+                color: #9C27B0;
+                border-radius: 4px;
+                border: 1px solid rgba(156, 39, 176, 0.4);
+            }
+            /* Task item header row - responsive with wrapping */
+            .task-header {
+                display: flex;
+                align-items: center;
+                gap: 8px 12px;
+                margin-bottom: 4px;
+                flex-wrap: wrap;
+            }
+            .task-type {
+                font-weight: 600;
+                color: #60a5fa;
+            }
+            .task-size {
+                font-family: monospace;
+                color: #10b981;
+                background: rgba(16, 185, 129, 0.1);
+                padding: 2px 6px;
+                border-radius: 4px;
+            }
+            .task-images {
+                color: #f59e0b;
+                background: rgba(245, 158, 11, 0.1);
+                padding: 2px 6px;
+                border-radius: 4px;
+            }
+            .task-checkpoint {
+                color: #e5e7eb;
+                background: rgba(229, 231, 235, 0.1);
+                padding: 2px 6px;
+                border-radius: 4px;
+                max-width: 200px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .task-vae {
+                color: #f472b6;
+                background: rgba(244, 114, 182, 0.1);
+                padding: 2px 6px;
+                border-radius: 4px;
+                max-width: 150px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            /* Task meta row - responsive with wrapping */
+            .task-meta {
+                display: flex;
+                gap: 8px 12px;
+                flex-wrap: wrap;
+                color: var(--body-text-color-subdued, #9ca3af);
+            }
+            .task-model {
+                max-width: 300px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .task-sampler {
+                color: #a78bfa;
+            }
+            .task-date {
+                color: #9ca3af;
+            }
+            /* Task item base - adjust height for wrapped content */
+            .task-item {
+                min-height: auto;
             }
         `;
         document.head.appendChild(style);
