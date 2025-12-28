@@ -32,6 +32,7 @@ def get_queue_state():
             'intercept_next': False,
             'intercept_tab': None,
             'last_result': None,
+            'last_task_data': None,  # Full task data for bookmarks
             'intercept_timestamp': None,  # When intercept was set
             'lock': threading.Lock()
         }
@@ -98,6 +99,18 @@ class QueueInterceptState:
         with state['lock']:
             state['last_result'] = value
 
+    @property
+    def last_task_data(self):
+        state = get_queue_state()
+        with state['lock']:
+            return state.get('last_task_data')
+
+    @last_task_data.setter
+    def last_task_data(self, value):
+        state = get_queue_state()
+        with state['lock']:
+            state['last_task_data'] = value
+
 
 queue_state = QueueInterceptState()
 
@@ -116,6 +129,13 @@ def get_intercept_result() -> str:
     result = queue_state.last_result
     queue_state.last_result = None
     return result
+
+
+def get_last_task_data() -> dict:
+    """Get the full task data from the last interception (for bookmarks)."""
+    data = queue_state.last_task_data
+    queue_state.last_task_data = None
+    return data
 
 
 def clear_intercept_mode():
@@ -213,4 +233,13 @@ class QueueInterceptorScript(scripts.Script):
         )
 
         queue_state.last_result = f"Task queued: {task.get_display_name()}"
+        # Store task data for bookmark creation
+        queue_state.last_task_data = {
+            'status': 'queued',
+            'task_id': task.id,
+            'task_type': task_type.value,
+            'params': params,
+            'checkpoint': checkpoint,
+            'script_args': script_args
+        }
         print(f"[TaskScheduler] {queue_state.last_result}")

@@ -22,11 +22,11 @@ def get_intercept_functions():
         scripts_dir = os.path.join(ext_dir, "scripts")
         if scripts_dir not in sys.path:
             sys.path.insert(0, scripts_dir)
-        from queue_interceptor import set_intercept_mode, get_intercept_result, clear_intercept_mode
-        return set_intercept_mode, get_intercept_result, clear_intercept_mode
+        from queue_interceptor import set_intercept_mode, get_intercept_result, clear_intercept_mode, get_last_task_data
+        return set_intercept_mode, get_intercept_result, clear_intercept_mode, get_last_task_data
     except Exception as e:
         print(f"[TaskScheduler] Failed to import intercept functions: {e}")
-        return None, None, None
+        return None, None, None, None
 
 
 class QueueTaskRequest(BaseModel):
@@ -476,7 +476,7 @@ def setup_api(app: FastAPI):
                     "error": f"Invalid tab: {tab}"
                 }, status_code=400)
 
-            set_intercept_mode, _, _ = get_intercept_functions()
+            set_intercept_mode, _, _, _ = get_intercept_functions()
             if set_intercept_mode is None:
                 return JSONResponse({
                     "success": False,
@@ -500,7 +500,7 @@ def setup_api(app: FastAPI):
     async def get_intercept_result_api():
         """Get the result of the last interception."""
         try:
-            _, get_result, _ = get_intercept_functions()
+            _, get_result, _, _ = get_intercept_functions()
             if get_result is None:
                 return JSONResponse({
                     "success": False,
@@ -524,7 +524,7 @@ def setup_api(app: FastAPI):
     async def clear_intercept():
         """Clear the intercept mode."""
         try:
-            _, _, clear_mode = get_intercept_functions()
+            _, _, clear_mode, _ = get_intercept_functions()
             if clear_mode is None:
                 return JSONResponse({
                     "success": False,
@@ -571,7 +571,7 @@ def setup_api(app: FastAPI):
     async def get_intercept_status():
         """Get current intercept state for UI state management."""
         try:
-            _, get_result, _ = get_intercept_functions()
+            _, get_result, _, _ = get_intercept_functions()
 
             # Import the state directly to get all info
             try:
@@ -705,29 +705,26 @@ def setup_api(app: FastAPI):
             }, status_code=500)
 
     @app.post("/task-scheduler/bookmarks")
-    async def create_bookmark(name: str = "Untitled"):
+    async def create_bookmark(name: str = ""):
         """Create a bookmark from the current intercept data."""
         try:
             from .db import get_database
             import json
 
-            # Get the last intercept result
-            _, get_result, clear_mode = get_intercept_functions()
-            if get_result is None:
+            # Get the last task data from intercept
+            _, _, _, get_task_data = get_intercept_functions()
+            if get_task_data is None:
                 return JSONResponse({
                     "success": False,
                     "error": "Intercept module not available"
                 }, status_code=500)
 
-            result = get_result()
-            if not result or result.get('status') != 'queued':
+            task_data = get_task_data()
+            if not task_data or task_data.get('status') != 'queued':
                 return JSONResponse({
                     "success": False,
                     "error": "No valid intercept data available. Use the Queue button first."
                 }, status_code=400)
-
-            # Extract data from the intercept result
-            task_data = result.get('task', {})
 
             db = get_database()
             bookmark_data = {
@@ -740,10 +737,11 @@ def setup_api(app: FastAPI):
 
             bookmark = db.add_bookmark(bookmark_data)
 
+            display_name = name if name else "Bookmark"
             return JSONResponse({
                 "success": True,
                 "bookmark_id": bookmark['id'],
-                "message": f"Bookmark '{name}' created"
+                "message": f"{display_name} saved!"
             })
 
         except Exception as e:
