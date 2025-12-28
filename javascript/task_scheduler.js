@@ -23,6 +23,9 @@
         history: new Set()
     };
 
+    // Current tab in task list (active, history, bookmarks)
+    let currentTaskTab = 'active';
+
     // Wait for DOM to be ready
     function onReady(callback) {
         if (document.readyState === 'complete' || document.readyState === 'interactive') {
@@ -264,15 +267,11 @@
         }
     }
 
-    // Render task list HTML with separate Active and History sections
-    function renderTaskList(tasks, activeOpen = null, historyOpen = null) {
-        if (!tasks || tasks.length === 0) {
-            return "<div class='task-empty'>No tasks in queue. Use the Queue button next to Generate to add tasks.</div>";
-        }
-
+    // Render task list HTML with tabbed interface (Active, History, Bookmarks)
+    function renderTaskList(tasks) {
         // Separate active (pending/running/paused) from history (completed/failed/cancelled/stopped)
-        const activeTasks = tasks.filter(t => t.status === 'pending' || t.status === 'running' || t.status === 'paused');
-        const historyTasks = tasks.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled' || t.status === 'stopped');
+        const activeTasks = tasks ? tasks.filter(t => t.status === 'pending' || t.status === 'running' || t.status === 'paused') : [];
+        const historyTasks = tasks ? tasks.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled' || t.status === 'stopped') : [];
 
         // Clean up selected tasks that no longer exist
         const activeIds = new Set(activeTasks.map(t => t.id));
@@ -280,56 +279,94 @@
         selectedTasks.active = new Set([...selectedTasks.active].filter(id => activeIds.has(id)));
         selectedTasks.history = new Set([...selectedTasks.history].filter(id => historyIds.has(id)));
 
-        // Determine open state - use provided values or defaults
-        const isActiveOpen = activeOpen !== null ? activeOpen : (activeTasks.length > 0);
-        const isHistoryOpen = historyOpen !== null ? historyOpen : (activeTasks.length === 0);
-
         let html = '';
 
-        // Active Tasks Section (collapsible, open by default)
-        html += "<div class='task-section task-section-active'>";
-        html += `<details class='task-active-details' ${isActiveOpen ? 'open' : ''}>`;
-        html += `<summary class='task-section-header task-active-summary'>
-            <span class='active-title'>Active Tasks (${activeTasks.length})</span>
-            <span class='active-actions'>
-                ${activeTasks.length > 0 ? renderSelectionHeader('active', activeTasks.length) : ''}
-            </span>
-        </summary>`;
-        if (activeTasks.length > 0) {
-            html += "<div class='task-list'>";
-            activeTasks.forEach((task, i) => {
-                html += renderTaskItem(task, i + 1, 'active');
-            });
-            html += "</div>";
-        } else {
-            html += "<div class='task-empty-small'>No active tasks</div>";
-        }
-        html += "</details>";
+        // Tab header
+        html += "<div class='ts-tabs'>";
+        html += `<button class='ts-tab ${currentTaskTab === 'active' ? 'active' : ''}' onclick='window.switchTaskTab("active")'>
+            <span class='ts-tab-icon'>📋</span>
+            <span class='ts-tab-label'>Active</span>
+            <span class='ts-tab-count'>${activeTasks.length}</span>
+        </button>`;
+        html += `<button class='ts-tab ${currentTaskTab === 'history' ? 'active' : ''}' onclick='window.switchTaskTab("history")'>
+            <span class='ts-tab-icon'>📜</span>
+            <span class='ts-tab-label'>History</span>
+            <span class='ts-tab-count'>${historyTasks.length}</span>
+        </button>`;
+        html += `<button class='ts-tab ${currentTaskTab === 'bookmarks' ? 'active' : ''}' onclick='window.switchTaskTab("bookmarks")'>
+            <span class='ts-tab-icon'>⭐</span>
+            <span class='ts-tab-label'>Bookmarks</span>
+            <span class='ts-tab-count'>0</span>
+        </button>`;
         html += "</div>";
 
-        // History Section (collapsible)
-        html += "<div class='task-section task-section-history'>";
-        html += `<details class='task-history-details' ${isHistoryOpen ? 'open' : ''}>`;
-        html += `<summary class='task-section-header task-history-summary'>
-            <span class='history-title'>History (${historyTasks.length} tasks)</span>
-            <span class='history-actions'>
-                ${historyTasks.length > 0 ? renderSelectionHeader('history', historyTasks.length) : ''}
-            </span>
-        </summary>`;
-        if (historyTasks.length > 0) {
-            html += "<div class='task-list task-list-history'>";
-            historyTasks.forEach((task, i) => {
-                html += renderTaskItem(task, i + 1, 'history');
-            });
+        // Tab content
+        html += "<div class='ts-tab-content'>";
+
+        // Active tab content
+        if (currentTaskTab === 'active') {
+            html += "<div class='ts-tab-panel'>";
+            if (activeTasks.length > 0) {
+                html += `<div class='ts-panel-header'>
+                    ${renderSelectionHeader('active', activeTasks.length)}
+                </div>`;
+                html += "<div class='task-list'>";
+                activeTasks.forEach((task, i) => {
+                    html += renderTaskItem(task, i + 1, 'active');
+                });
+                html += "</div>";
+            } else {
+                html += "<div class='task-empty'>No active tasks. Use the Queue button next to Generate to add tasks.</div>";
+            }
             html += "</div>";
-        } else {
-            html += "<div class='task-empty-small'>No history</div>";
         }
-        html += "</details>";
+
+        // History tab content
+        if (currentTaskTab === 'history') {
+            html += "<div class='ts-tab-panel'>";
+            if (historyTasks.length > 0) {
+                html += `<div class='ts-panel-header'>
+                    ${renderSelectionHeader('history', historyTasks.length)}
+                </div>`;
+                html += "<div class='task-list task-list-history'>";
+                historyTasks.forEach((task, i) => {
+                    html += renderTaskItem(task, i + 1, 'history');
+                });
+                html += "</div>";
+            } else {
+                html += "<div class='task-empty'>No completed tasks yet.</div>";
+            }
+            html += "</div>";
+        }
+
+        // Bookmarks tab content
+        if (currentTaskTab === 'bookmarks') {
+            html += "<div class='ts-tab-panel'>";
+            html += "<div class='task-empty'>";
+            html += "<div class='ts-coming-soon'>";
+            html += "<span class='ts-coming-soon-icon'>⭐</span>";
+            html += "<h3>Bookmarks Coming Soon</h3>";
+            html += "<p>Save your favorite task configurations for quick access.</p>";
+            html += "</div>";
+            html += "</div>";
+            html += "</div>";
+        }
+
         html += "</div>";
 
         return html;
     }
+
+    // Switch between task tabs
+    window.switchTaskTab = function(tab) {
+        currentTaskTab = tab;
+        // Exit selection mode when switching tabs
+        selectionMode.active = false;
+        selectionMode.history = false;
+        selectedTasks.active.clear();
+        selectedTasks.history.clear();
+        refreshTaskList(true);
+    };
 
     // Render queue status HTML
     function renderQueueStatus(status) {
@@ -504,12 +541,7 @@
                 if (taskListEl) {
                     // Find the actual HTML container inside Gradio's wrapper
                     const htmlContainer = taskListEl.querySelector('.prose') || taskListEl;
-
-                    // Save details open/closed state before re-render
-                    const activeDetailsOpen = htmlContainer.querySelector('.task-active-details')?.open ?? true;
-                    const historyDetailsOpen = htmlContainer.querySelector('.task-history-details')?.open ?? false;
-
-                    htmlContainer.innerHTML = renderTaskList(tasksData.tasks, activeDetailsOpen, historyDetailsOpen);
+                    htmlContainer.innerHTML = renderTaskList(tasksData.tasks);
                 }
             }
 
@@ -1606,6 +1638,108 @@
             @keyframes taskSchedulerSlideOut {
                 from { transform: translateX(0); opacity: 1; }
                 to { transform: translateX(100%); opacity: 0; }
+            }
+            /* Task List Tabs */
+            .ts-tabs {
+                display: flex !important;
+                gap: 12px !important;
+                padding: 8px 12px 0 12px !important;
+                background: var(--block-background-fill, #1f2937) !important;
+                border-radius: 8px 8px 0 0 !important;
+                border-bottom: 1px solid var(--border-color-primary, #374151) !important;
+            }
+            .ts-tab {
+                display: flex !important;
+                align-items: center !important;
+                gap: 8px !important;
+                padding: 10px 20px !important;
+                border: none !important;
+                background: transparent !important;
+                color: var(--body-text-color-subdued, #9ca3af) !important;
+                cursor: pointer !important;
+                border-radius: 6px 6px 0 0 !important;
+                font-size: 0.95em !important;
+                font-weight: 500 !important;
+                transition: all 0.2s ease !important;
+                position: relative !important;
+            }
+            .ts-tab:hover {
+                background: rgba(255, 255, 255, 0.05);
+                color: var(--body-text-color, #fff);
+            }
+            .ts-tab.active {
+                background: var(--background-fill-primary, #111827);
+                color: var(--body-text-color, #fff);
+            }
+            .ts-tab.active::after {
+                content: '';
+                position: absolute;
+                bottom: -1px;
+                left: 0;
+                right: 0;
+                height: 2px;
+                background: #2196F3;
+            }
+            .ts-tab-icon {
+                font-size: 1.1em;
+            }
+            .ts-tab-label {
+                display: inline;
+            }
+            .ts-tab-count {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 2px 8px;
+                border-radius: 10px;
+                font-size: 0.85em;
+                min-width: 24px;
+                text-align: center;
+            }
+            .ts-tab.active .ts-tab-count {
+                background: rgba(33, 150, 243, 0.2);
+                color: #2196F3;
+            }
+            .ts-tab-content {
+                background: var(--background-fill-primary, #111827);
+                border-radius: 0 0 8px 8px;
+                min-height: 200px;
+            }
+            .ts-tab-panel {
+                padding: 12px;
+            }
+            .ts-panel-header {
+                display: flex;
+                justify-content: flex-end;
+                padding: 0 4px 8px 4px;
+                border-bottom: 1px solid var(--border-color-primary, #374151);
+                margin-bottom: 8px;
+            }
+            /* Coming soon placeholder */
+            .ts-coming-soon {
+                text-align: center;
+                padding: 40px 20px;
+            }
+            .ts-coming-soon-icon {
+                font-size: 3em;
+                display: block;
+                margin-bottom: 16px;
+                opacity: 0.5;
+            }
+            .ts-coming-soon h3 {
+                margin: 0 0 8px 0;
+                color: var(--body-text-color, #fff);
+            }
+            .ts-coming-soon p {
+                margin: 0;
+                color: var(--body-text-color-subdued, #9ca3af);
+            }
+            /* Responsive tabs */
+            @media (max-width: 500px) {
+                .ts-tab-label {
+                    display: none;
+                }
+                .ts-tab {
+                    padding: 10px 12px;
+                }
             }
             /* Large Batch Warning Modal */
             .ts-batch-modal-overlay {
