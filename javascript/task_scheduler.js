@@ -79,6 +79,10 @@
     // Track if any task is currently running
     let isAnyTaskRunning = false;
 
+    // Large batch warning settings
+    let largeBatchWarningThreshold = 1;
+    let bypassLargeBatchWarning = false;
+
     // Render a single task item
     function renderTaskItem(task, index, listType) {
         const statusIcons = {
@@ -1314,9 +1318,190 @@
         setInterval(addTabClickHandlers, 5000);
     }
 
+    // =====================================================
+    // Large Batch Warning Interceptor
+    // =====================================================
+
+    // Fetch large batch warning setting
+    async function fetchLargeBatchSetting() {
+        try {
+            const response = await fetch('/task-scheduler/settings');
+            const data = await response.json();
+            if (data.success && data.settings) {
+                largeBatchWarningThreshold = data.settings.large_batch_warning || 0;
+                console.log('[TaskScheduler] Large batch warning threshold:', largeBatchWarningThreshold);
+            }
+        } catch (error) {
+            console.error('[TaskScheduler] Error fetching large batch setting:', error);
+        }
+    }
+
+    // Get total images from UI (batch_count * batch_size)
+    function getTotalImages(isImg2Img) {
+        const prefix = isImg2Img ? 'img2img' : 'txt2img';
+
+        // Find batch_count and batch_size inputs
+        const batchCountEl = document.querySelector(`#${prefix}_batch_count input[type="number"]`);
+        const batchSizeEl = document.querySelector(`#${prefix}_batch_size input[type="number"]`);
+
+        const batchCount = batchCountEl ? parseInt(batchCountEl.value) || 1 : 1;
+        const batchSize = batchSizeEl ? parseInt(batchSizeEl.value) || 1 : 1;
+
+        return batchCount * batchSize;
+    }
+
+    // Show large batch confirmation modal
+    function showLargeBatchModal(totalImages, isImg2Img, onGenerate, onQueue, onCancel) {
+        // Remove existing modal if any
+        const existing = document.querySelector('.ts-batch-modal-overlay');
+        if (existing) existing.remove();
+
+        const modalHtml = `
+            <div class="ts-batch-modal-overlay">
+                <div class="ts-batch-modal">
+                    <div class="ts-batch-modal-header">
+                        <span class="ts-batch-modal-icon">⚠️</span>
+                        <h3>Large Batch Warning</h3>
+                    </div>
+                    <div class="ts-batch-modal-body">
+                        <p>You are about to generate <strong>${totalImages} images</strong>.</p>
+                        <p>This may take a while. What would you like to do?</p>
+                    </div>
+                    <div class="ts-batch-modal-actions">
+                        <button class="ts-batch-btn ts-batch-btn-generate">Generate Now</button>
+                        <button class="ts-batch-btn ts-batch-btn-queue">Queue Instead</button>
+                        <button class="ts-batch-btn ts-batch-btn-cancel">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+        const overlay = document.querySelector('.ts-batch-modal-overlay');
+        const generateBtn = overlay.querySelector('.ts-batch-btn-generate');
+        const queueBtn = overlay.querySelector('.ts-batch-btn-queue');
+        const cancelBtn = overlay.querySelector('.ts-batch-btn-cancel');
+
+        const closeModal = () => overlay.remove();
+
+        generateBtn.addEventListener('click', () => {
+            closeModal();
+            onGenerate();
+        });
+
+        queueBtn.addEventListener('click', () => {
+            closeModal();
+            onQueue();
+        });
+
+        cancelBtn.addEventListener('click', () => {
+            closeModal();
+            onCancel();
+        });
+
+        // Close on overlay click
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                closeModal();
+                onCancel();
+            }
+        });
+
+        // Close on Escape
+        const escHandler = (e) => {
+            if (e.key === 'Escape') {
+                closeModal();
+                onCancel();
+                document.removeEventListener('keydown', escHandler);
+            }
+        };
+        document.addEventListener('keydown', escHandler);
+    }
+
+    // Setup Generate button interceptors
+    function setupGenerateInterceptors() {
+        const buttons = [
+            { id: 'txt2img_generate', isImg2Img: false },
+            { id: 'img2img_generate', isImg2Img: true }
+        ];
+
+        buttons.forEach(({ id, isImg2Img }) => {
+            const button = document.getElementById(id);
+            if (!button || button.dataset.tsBatchIntercepted) return;
+
+            button.dataset.tsBatchIntercepted = 'true';
+
+            button.addEventListener('click', (e) => {
+                // Skip if bypassing
+                if (bypassLargeBatchWarning) {
+                    bypassLargeBatchWarning = false;
+                    return;
+                }
+
+                // Skip if feature disabled
+                if (largeBatchWarningThreshold <= 0) return;
+
+                // Check total images
+                const totalImages = getTotalImages(isImg2Img);
+                if (totalImages <= largeBatchWarningThreshold) return;
+
+                // Prevent default - we'll handle this
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+
+                // Show modal
+                showLargeBatchModal(
+                    totalImages,
+                    isImg2Img,
+                    // On Generate
+                    () => {
+                        bypassLargeBatchWarning = true;
+                        button.click();
+                    },
+                    // On Queue - use existing intercept mechanism
+                    async () => {
+                        try {
+                            const tab = isImg2Img ? 'img2img' : 'txt2img';
+                            const response = await fetch(`/task-scheduler/intercept/${tab}`, {
+                                method: 'POST'
+                            });
+                            const data = await response.json();
+                            if (data.success) {
+                                bypassLargeBatchWarning = true;
+                                button.click();
+                            } else {
+                                showNotification('Failed to queue: ' + (data.error || 'Unknown error'), 'error');
+                            }
+                        } catch (error) {
+                            console.error('[TaskScheduler] Error setting intercept:', error);
+                            showNotification('Failed to queue task', 'error');
+                        }
+                    },
+                    // On Cancel - do nothing
+                    () => {}
+                );
+            }, true); // Capture phase
+
+            console.log(`[TaskScheduler] Batch warning interceptor attached to ${id}`);
+        });
+
+        // Retry if buttons not found
+        const allFound = buttons.every(({ id }) => document.getElementById(id)?.dataset.tsBatchIntercepted);
+        if (!allFound) {
+            setTimeout(setupGenerateInterceptors, 1000);
+        }
+    }
+
     // Initialize
     function init() {
         console.log('[TaskScheduler] Initializing JavaScript (Queue buttons created via Gradio)...');
+
+        // Fetch settings and setup interceptors
+        fetchLargeBatchSetting().then(() => {
+            setupGenerateInterceptors();
+        });
 
         // Start auto-refresh for task list
         startAutoRefresh();
@@ -1331,6 +1516,100 @@
             @keyframes taskSchedulerSlideOut {
                 from { transform: translateX(0); opacity: 1; }
                 to { transform: translateX(100%); opacity: 0; }
+            }
+            /* Large Batch Warning Modal */
+            .ts-batch-modal-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.7);
+                z-index: 10002;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                animation: fadeIn 0.2s ease;
+            }
+            @keyframes fadeIn {
+                from { opacity: 0; }
+                to { opacity: 1; }
+            }
+            .ts-batch-modal {
+                background: var(--background-fill-primary, #1f2937);
+                border-radius: 12px;
+                padding: 24px;
+                min-width: 320px;
+                max-width: 90%;
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+                animation: modalSlideIn 0.3s ease;
+            }
+            @keyframes modalSlideIn {
+                from { transform: translateY(-20px); opacity: 0; }
+                to { transform: translateY(0); opacity: 1; }
+            }
+            .ts-batch-modal-header {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 16px;
+            }
+            .ts-batch-modal-icon {
+                font-size: 2em;
+            }
+            .ts-batch-modal-header h3 {
+                margin: 0;
+                font-size: 1.3em;
+                color: var(--body-text-color, #fff);
+            }
+            .ts-batch-modal-body {
+                margin-bottom: 20px;
+                color: var(--body-text-color, #e5e7eb);
+            }
+            .ts-batch-modal-body p {
+                margin: 8px 0;
+            }
+            .ts-batch-modal-body strong {
+                color: #f59e0b;
+            }
+            .ts-batch-modal-actions {
+                display: flex;
+                gap: 10px;
+                justify-content: flex-end;
+                flex-wrap: wrap;
+            }
+            .ts-batch-btn {
+                padding: 10px 18px;
+                border-radius: 6px;
+                border: 1px solid transparent;
+                cursor: pointer;
+                font-size: 0.95em;
+                font-weight: 500;
+                transition: all 0.2s ease;
+            }
+            .ts-batch-btn-generate {
+                background: rgba(76, 175, 80, 0.2);
+                border-color: rgba(76, 175, 80, 0.5);
+                color: #4CAF50;
+            }
+            .ts-batch-btn-generate:hover {
+                background: rgba(76, 175, 80, 0.35);
+            }
+            .ts-batch-btn-queue {
+                background: rgba(33, 150, 243, 0.2);
+                border-color: rgba(33, 150, 243, 0.5);
+                color: #2196F3;
+            }
+            .ts-batch-btn-queue:hover {
+                background: rgba(33, 150, 243, 0.35);
+            }
+            .ts-batch-btn-cancel {
+                background: rgba(158, 158, 158, 0.2);
+                border-color: rgba(158, 158, 158, 0.5);
+                color: #9E9E9E;
+            }
+            .ts-batch-btn-cancel:hover {
+                background: rgba(158, 158, 158, 0.35);
             }
             /* Gradio Queue buttons styling */
             #txt2img_queue, #img2img_queue {

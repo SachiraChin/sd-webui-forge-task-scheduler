@@ -678,6 +678,17 @@ def on_ui_settings():
         ).info("Auto-clear intercept mode if not consumed within this time. Prevents queue button from getting stuck. Increase if you have slow UI or extensions that delay processing.")
     )
 
+    shared.opts.add_option(
+        "task_scheduler_large_batch_warning",
+        shared.OptionInfo(
+            default=1,
+            label="Large batch warning threshold",
+            component=gr.Slider,
+            component_args={"minimum": 0, "maximum": 100, "step": 1},
+            section=section,
+        ).info("Show confirmation dialog when generating more than this many images (batch_size × batch_count). Set to 0 to disable.")
+    )
+
 
 def get_setting(name: str, default=None):
     """Get a task scheduler setting value."""

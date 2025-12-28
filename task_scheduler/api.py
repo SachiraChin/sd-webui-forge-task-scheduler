@@ -552,6 +552,7 @@ def setup_api(app: FastAPI):
 
             settings = {
                 "enable_controlnet": getattr(shared.opts, 'task_scheduler_enable_controlnet', False),
+                "large_batch_warning": getattr(shared.opts, 'task_scheduler_large_batch_warning', 1),
             }
 
             return JSONResponse({
