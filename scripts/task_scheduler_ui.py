@@ -689,6 +689,16 @@ def on_ui_settings():
         ).info("Show confirmation dialog when generating more than this many images (batch_size × batch_count). Set to 0 to disable.")
     )
 
+    shared.opts.add_option(
+        "task_scheduler_bookmark_prompt_name",
+        shared.OptionInfo(
+            default=False,
+            label="Prompt for bookmark name",
+            component=gr.Checkbox,
+            section=section,
+        ).info("When enabled, shows a dialog to enter a name when creating bookmarks. When disabled, bookmarks are created immediately without a name.")
+    )
+
 
 def get_setting(name: str, default=None):
     """Get a task scheduler setting value."""

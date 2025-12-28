@@ -29,6 +29,7 @@
     // Bookmarks cache
     let bookmarksCache = [];
     let bookmarksLoaded = false;
+    let bookmarkPromptName = false;
 
     // Wait for DOM to be ready
     function onReady(callback) {
@@ -389,31 +390,39 @@
     // Render a bookmark item
     function renderBookmarkItem(bookmark, index) {
         const params = bookmark.params || {};
-        const prompt = params.prompt || '';
-        const truncatedPrompt = prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt;
         const taskType = bookmark.task_type || 'txt2img';
         const checkpoint = bookmark.checkpoint || '';
-        const shortCheckpoint = checkpoint.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, '') || checkpoint;
+        const shortCheckpoint = checkpoint.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, '') || 'No model';
 
         // Extract display info
         const width = params.width || 512;
         const height = params.height || 512;
-        const steps = params.steps || 20;
         const sampler = params.sampler_name || 'Euler';
+        const scheduler = params.scheduler || 'automatic';
+
+        // Format created date
+        let createdDate = '';
+        if (bookmark.created_at) {
+            const date = new Date(bookmark.created_at);
+            createdDate = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
+        // Display name or model name as title
+        const displayName = bookmark.name || shortCheckpoint;
 
         return `
         <div class='task-item bookmark-item' data-bookmark-id='${bookmark.id}'>
             <div class='task-info'>
                 <div class='task-header'>
                     <span class='bookmark-icon'>⭐</span>
-                    <span class='bookmark-name'>${bookmark.name || 'Untitled'}</span>
+                    <span class='bookmark-name'>${displayName}</span>
                     <span class='task-type'>${taskType}</span>
-                    <span class='task-size'>${width}×${height}</span>
                 </div>
-                <div class='task-prompt'>${truncatedPrompt || '<em>No prompt</em>'}</div>
-                <div class='task-meta'>
-                    ${shortCheckpoint ? `<span class='task-model'>${shortCheckpoint}</span>` : ''}
-                    <span class='task-sampler'>${sampler} · ${steps} steps</span>
+                <div class='bookmark-details'>
+                    <span class='bookmark-detail'><strong>Model:</strong> ${shortCheckpoint}</span>
+                    <span class='bookmark-detail'><strong>Size:</strong> ${width}×${height}</span>
+                    <span class='bookmark-detail'><strong>Sampler:</strong> ${sampler} / ${scheduler}</span>
+                    <span class='bookmark-detail'><strong>Created:</strong> ${createdDate}</span>
                 </div>
             </div>
             <div class='task-actions'>
@@ -1629,18 +1638,21 @@
     // =====================================================
 
     // Fetch large batch warning setting
-    async function fetchLargeBatchSetting() {
+    async function fetchSettings() {
         try {
             const response = await fetch('/task-scheduler/settings');
             const data = await response.json();
             if (data.success && data.settings) {
                 largeBatchWarningThreshold = data.settings.large_batch_warning || 0;
-                console.log('[TaskScheduler] Large batch warning threshold:', largeBatchWarningThreshold);
+                bookmarkPromptName = data.settings.bookmark_prompt_name || false;
             }
         } catch (error) {
-            console.error('[TaskScheduler] Error fetching large batch setting:', error);
+            console.error('[TaskScheduler] Error fetching settings:', error);
         }
     }
+
+    // Alias for backwards compatibility
+    const fetchLargeBatchSetting = fetchSettings;
 
     // Get total images from UI (batch_count * batch_size)
     function getTotalImages(isImg2Img) {
@@ -1914,8 +1926,13 @@
                 menu.querySelector('[data-action="bookmark"]').addEventListener('click', async () => {
                     menu.remove();
 
-                    // Show name input modal
-                    showBookmarkNameModal(tab);
+                    // Check if name prompt is enabled
+                    if (bookmarkPromptName) {
+                        showBookmarkNameModal(tab);
+                    } else {
+                        // Create bookmark directly without name
+                        await createBookmark(tab, '');
+                    }
                 });
 
                 // Close menu on click outside
@@ -2172,24 +2189,26 @@
             .ts-context-menu {
                 position: absolute;
                 z-index: 10003;
-                background: var(--block-background-fill, #1f2937);
-                border: 1px solid var(--border-color-primary, #374151);
-                border-radius: 8px;
-                box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-                min-width: 180px;
-                overflow: hidden;
+                background: var(--block-background-fill, #1f2937) !important;
+                border: 1px solid var(--border-color-primary, #374151) !important;
+                border-radius: 8px !important;
+                box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5) !important;
+                min-width: 180px !important;
+                overflow: hidden !important;
             }
             .ts-context-menu-item {
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                padding: 12px 16px;
-                cursor: pointer;
-                color: var(--body-text-color, #fff);
-                transition: background 0.15s ease;
+                display: flex !important;
+                align-items: center !important;
+                gap: 10px !important;
+                padding: 12px 16px !important;
+                cursor: pointer !important;
+                color: var(--body-text-color, #fff) !important;
+                background: var(--block-background-fill, #1f2937) !important;
+                transition: background 0.15s ease !important;
+                border: none !important;
             }
             .ts-context-menu-item:hover {
-                background: rgba(33, 150, 243, 0.2);
+                background: rgba(255, 193, 7, 0.2) !important;
             }
             .ts-context-menu-icon {
                 font-size: 1.1em;
@@ -2217,14 +2236,18 @@
                 display: flex;
                 align-items: center;
                 gap: 8px;
-                margin-bottom: 4px;
+                margin-bottom: 8px;
             }
             .bookmark-item .bookmark-icon {
-                font-size: 1em;
+                font-size: 1.1em;
             }
             .bookmark-item .bookmark-name {
                 font-weight: 600;
                 color: var(--body-text-color, #fff);
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }
             .bookmark-item .task-type {
                 font-size: 0.75em;
@@ -2233,21 +2256,26 @@
                 border-radius: 4px;
                 color: #ffc107;
             }
-            .bookmark-item .task-size {
-                font-size: 0.8em;
-                color: var(--body-text-color-subdued, #9ca3af);
-            }
-            .bookmark-item .task-meta {
-                display: flex;
-                gap: 12px;
+            .bookmark-item .bookmark-details {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 6px 16px;
                 font-size: 0.85em;
                 color: var(--body-text-color-subdued, #9ca3af);
             }
-            .bookmark-item .task-model {
-                max-width: 200px;
+            .bookmark-item .bookmark-detail {
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
+            }
+            .bookmark-item .bookmark-detail strong {
+                color: var(--body-text-color, #fff);
+                font-weight: 500;
+            }
+            @media (max-width: 600px) {
+                .bookmark-item .bookmark-details {
+                    grid-template-columns: 1fr;
+                }
             }
             /* Responsive tabs */
             @media (max-width: 500px) {
