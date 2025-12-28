@@ -21,7 +21,7 @@ I take full responsibility for any bugs, errors, or issues in the code. If you e
 This extension wouldn't exist without the incredible work of other developers in the community. We studied, learned from, and were inspired by the following projects:
 
 ### [Agent Scheduler](https://github.com/SipherAGI/sd-webui-agent-scheduler) by SipherAGI
-The original task scheduling extension that inspired this project. Their approach to queue management and task execution provided the foundational concepts for this extension.
+The original task scheduling extension that inspired this project. Their approach to queue management, task execution, and proper state management (`shared.state.begin()`/`end()`) provided the foundational concepts for this extension.
 
 ### [SD Civitai Browser Plus](https://github.com/TheSlateGray/sd-civitai-browser-plus) by TheSlateGray
 Their implementation of loading generation parameters back into the UI using the paste mechanism was invaluable. The "Load to UI" feature in this extension directly uses techniques learned from their codebase.

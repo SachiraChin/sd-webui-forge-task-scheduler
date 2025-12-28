@@ -711,7 +711,12 @@ class TaskExecutor:
                     processed = process_images(p)
                     return processed
 
-            processed = main_thread.run_and_wait_result(run_generation)
+            # Properly manage Forge state to prevent "busy" detection issues
+            shared.state.begin(job=f"TaskScheduler-{task.id}")
+            try:
+                processed = main_thread.run_and_wait_result(run_generation)
+            finally:
+                shared.state.end()
 
             # Clear progress
             shared.total_tqdm.clear()
@@ -770,7 +775,12 @@ class TaskExecutor:
                     processed = process_images(p)
                     return processed
 
-            processed = main_thread.run_and_wait_result(run_generation)
+            # Properly manage Forge state to prevent "busy" detection issues
+            shared.state.begin(job=f"TaskScheduler-{task.id}")
+            try:
+                processed = main_thread.run_and_wait_result(run_generation)
+            finally:
+                shared.state.end()
 
             # Clear progress
             shared.total_tqdm.clear()
