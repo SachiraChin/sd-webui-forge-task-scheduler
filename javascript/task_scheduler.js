@@ -26,6 +26,10 @@
     // Current tab in task list (active, history, bookmarks)
     let currentTaskTab = 'active';
 
+    // Bookmarks cache
+    let bookmarksCache = [];
+    let bookmarksLoaded = false;
+
     // Wait for DOM to be ready
     function onReady(callback) {
         if (document.readyState === 'complete' || document.readyState === 'interactive') {
@@ -296,7 +300,7 @@
         html += `<button class='ts-tab ${currentTaskTab === 'bookmarks' ? 'active' : ''}' onclick='window.switchTaskTab("bookmarks")'>
             <span class='ts-tab-icon'>⭐</span>
             <span class='ts-tab-label'>Bookmarks</span>
-            <span class='ts-tab-count'>0</span>
+            <span class='ts-tab-count'>${bookmarksCache.length}</span>
         </button>`;
         html += "</div>";
 
@@ -342,13 +346,21 @@
         // Bookmarks tab content
         if (currentTaskTab === 'bookmarks') {
             html += "<div class='ts-tab-panel'>";
-            html += "<div class='task-empty'>";
-            html += "<div class='ts-coming-soon'>";
-            html += "<span class='ts-coming-soon-icon'>⭐</span>";
-            html += "<h3>Bookmarks Coming Soon</h3>";
-            html += "<p>Save your favorite task configurations for quick access.</p>";
-            html += "</div>";
-            html += "</div>";
+            if (bookmarksCache.length > 0) {
+                html += "<div class='task-list'>";
+                bookmarksCache.forEach((bookmark, i) => {
+                    html += renderBookmarkItem(bookmark, i + 1);
+                });
+                html += "</div>";
+            } else {
+                html += "<div class='task-empty'>";
+                html += "<div class='ts-coming-soon'>";
+                html += "<span class='ts-coming-soon-icon'>⭐</span>";
+                html += "<h3>No Bookmarks Yet</h3>";
+                html += "<p>Right-click the Queue button and select 'Bookmark' to save configurations.</p>";
+                html += "</div>";
+                html += "</div>";
+            }
             html += "</div>";
         }
 
@@ -365,8 +377,255 @@
         selectionMode.history = false;
         selectedTasks.active.clear();
         selectedTasks.history.clear();
-        refreshTaskList(true);
+
+        // Fetch bookmarks when switching to bookmarks tab
+        if (tab === 'bookmarks') {
+            fetchBookmarks().then(() => refreshTaskList(true));
+        } else {
+            refreshTaskList(true);
+        }
     };
+
+    // Render a bookmark item
+    function renderBookmarkItem(bookmark, index) {
+        const params = bookmark.params || {};
+        const prompt = params.prompt || '';
+        const truncatedPrompt = prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt;
+        const taskType = bookmark.task_type || 'txt2img';
+        const checkpoint = bookmark.checkpoint || '';
+        const shortCheckpoint = checkpoint.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, '') || checkpoint;
+
+        // Extract display info
+        const width = params.width || 512;
+        const height = params.height || 512;
+        const steps = params.steps || 20;
+        const sampler = params.sampler_name || 'Euler';
+
+        return `
+        <div class='task-item bookmark-item' data-bookmark-id='${bookmark.id}'>
+            <div class='task-info'>
+                <div class='task-header'>
+                    <span class='bookmark-icon'>⭐</span>
+                    <span class='bookmark-name'>${bookmark.name || 'Untitled'}</span>
+                    <span class='task-type'>${taskType}</span>
+                    <span class='task-size'>${width}×${height}</span>
+                </div>
+                <div class='task-prompt'>${truncatedPrompt || '<em>No prompt</em>'}</div>
+                <div class='task-meta'>
+                    ${shortCheckpoint ? `<span class='task-model'>${shortCheckpoint}</span>` : ''}
+                    <span class='task-sampler'>${sampler} · ${steps} steps</span>
+                </div>
+            </div>
+            <div class='task-actions'>
+                <button class='task-btn task-btn-info' onclick='window.bookmarkAction("info", "${bookmark.id}")' title='View Details'>ℹ️</button>
+                <button class='task-btn task-btn-load' onclick='window.bookmarkAction("load", "${bookmark.id}", "${taskType}")' title='Send to ${taskType}'>📤</button>
+                <button class='task-btn task-btn-delete' onclick='window.bookmarkAction("delete", "${bookmark.id}")' title='Delete'>🗑️</button>
+            </div>
+        </div>
+        `;
+    }
+
+    // Fetch bookmarks from API
+    async function fetchBookmarks() {
+        try {
+            const response = await fetch('/task-scheduler/bookmarks');
+            const data = await response.json();
+            if (data.success) {
+                bookmarksCache = data.bookmarks || [];
+                bookmarksLoaded = true;
+            }
+        } catch (error) {
+            console.error('[TaskScheduler] Error fetching bookmarks:', error);
+        }
+    }
+
+    // Handle bookmark actions
+    window.bookmarkAction = function(action, bookmarkId, taskType) {
+        if (action === 'info') {
+            showBookmarkDetails(bookmarkId);
+        } else if (action === 'load') {
+            loadBookmarkToUI(bookmarkId, taskType);
+        } else if (action === 'delete') {
+            showConfirmModal({
+                icon: '🗑️',
+                title: 'Delete Bookmark',
+                message: 'Are you sure you want to delete this bookmark?',
+                confirmText: 'Delete',
+                confirmClass: 'ts-confirm-btn-delete',
+                onConfirm: () => {
+                    deleteBookmark(bookmarkId);
+                }
+            });
+        }
+    };
+
+    // Delete a bookmark
+    async function deleteBookmark(bookmarkId) {
+        try {
+            const response = await fetch(`/task-scheduler/bookmarks/${bookmarkId}`, {
+                method: 'DELETE'
+            });
+            const data = await response.json();
+            if (data.success) {
+                showNotification('Bookmark deleted', 'success');
+                await fetchBookmarks();
+                refreshTaskList(true);
+            } else {
+                showNotification('Failed to delete bookmark: ' + (data.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            console.error('[TaskScheduler] Error deleting bookmark:', error);
+            showNotification('Error deleting bookmark', 'error');
+        }
+    }
+
+    // Load bookmark to UI (reuses loadTaskToUI logic)
+    async function loadBookmarkToUI(bookmarkId, taskType) {
+        try {
+            const response = await fetch(`/task-scheduler/bookmarks/${bookmarkId}`);
+            const data = await response.json();
+
+            if (!data.success || !data.bookmark) {
+                showNotification('Failed to load bookmark', 'error');
+                return;
+            }
+
+            const bookmark = data.bookmark;
+            let params = bookmark.params;
+            if (typeof params === 'string') {
+                try { params = JSON.parse(params); } catch(e) { params = {}; }
+            }
+
+            const tabPrefix = taskType === 'img2img' ? 'img2img' : 'txt2img';
+
+            // Switch to the correct tab
+            const tabButton = document.querySelector(`#tabs > div > button[id$="${tabPrefix}_tab"]`) ||
+                              document.querySelector(`button[data-tab="${tabPrefix}"]`) ||
+                              Array.from(document.querySelectorAll('#tabs button')).find(b => b.textContent.toLowerCase().includes(tabPrefix));
+            if (tabButton) {
+                tabButton.click();
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+
+            // Build generation info string
+            const genInfo = buildGenerationInfo(params, taskType, bookmark.checkpoint);
+
+            // Use the paste functionality
+            const promptTextarea = gradioApp().querySelector(`#${tabPrefix}_prompt textarea`);
+            const pasteButton = gradioApp().querySelector('#paste');
+
+            if (promptTextarea && pasteButton) {
+                promptTextarea.value = genInfo;
+                promptTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+                await new Promise(resolve => setTimeout(resolve, 100));
+                pasteButton.click();
+
+                await new Promise(resolve => setTimeout(resolve, 300));
+
+                // Handle checkpoint and VAE
+                let vae = '';
+                const forgeModules = params.ui_settings && params.ui_settings.forge_additional_modules;
+                if (forgeModules && forgeModules.length > 0) {
+                    const modulePath = forgeModules[0];
+                    vae = modulePath.split(/[/\\]/).pop() || '';
+                }
+                if (!vae) {
+                    vae = (params.override_settings && params.override_settings.sd_vae) ||
+                          (params.ui_settings && params.ui_settings.sd_vae) || '';
+                }
+                await setCheckpointAndVAE(bookmark.checkpoint, vae);
+
+                showNotification(`Loaded bookmark to ${taskType}`, 'success');
+            } else {
+                showNotification('Failed to load - paste button not found', 'error');
+            }
+
+        } catch (error) {
+            console.error('[TaskScheduler] Error loading bookmark to UI:', error);
+            showNotification('Error loading bookmark', 'error');
+        }
+    }
+
+    // Show bookmark details modal
+    async function showBookmarkDetails(bookmarkId) {
+        try {
+            const response = await fetch(`/task-scheduler/bookmarks/${bookmarkId}`);
+            const data = await response.json();
+
+            if (!data.success || !data.bookmark) {
+                showNotification('Failed to load bookmark details', 'error');
+                return;
+            }
+
+            const bookmark = data.bookmark;
+            let params = bookmark.params;
+            if (typeof params === 'string') {
+                try { params = JSON.parse(params); } catch(e) { params = {}; }
+            }
+
+            // Reuse showTaskDetails modal structure
+            const existingModal = document.querySelector('.task-details-modal');
+            if (existingModal) existingModal.remove();
+
+            const modal = document.createElement('div');
+            modal.className = 'task-details-modal';
+
+            const width = params.width || 512;
+            const height = params.height || 512;
+            const steps = params.steps || 20;
+
+            modal.innerHTML = `
+                <div class='task-details-backdrop' onclick='this.parentElement.remove()'></div>
+                <div class='task-details-content'>
+                    <div class='task-details-header'>
+                        <h3>⭐ ${bookmark.name || 'Untitled Bookmark'}</h3>
+                        <div class='task-details-header-actions'>
+                            <button class='task-details-action-btn' onclick='window.bookmarkAction("load", "${bookmark.id}", "${bookmark.task_type}")'>📤 Send to UI</button>
+                            <button class='task-details-close' onclick='this.closest(".task-details-modal").remove()'>×</button>
+                        </div>
+                    </div>
+                    <div class='task-details-body'>
+                        <div class='task-details-section'>
+                            <h4>Basic Info</h4>
+                            <table class='task-details-table'>
+                                <tr><td>Type</td><td>${bookmark.task_type}</td></tr>
+                                <tr><td>Checkpoint</td><td>${bookmark.checkpoint || 'Not set'}</td></tr>
+                                <tr><td>Created</td><td>${bookmark.created_at || 'Unknown'}</td></tr>
+                            </table>
+                        </div>
+                        <div class='task-details-section'>
+                            <h4>Prompt</h4>
+                            <div class='task-prompt-cell'>${params.prompt || '<em>No prompt</em>'}</div>
+                        </div>
+                        ${params.negative_prompt ? `
+                        <div class='task-details-section'>
+                            <h4>Negative Prompt</h4>
+                            <div class='task-prompt-cell'>${params.negative_prompt}</div>
+                        </div>
+                        ` : ''}
+                        <div class='task-details-section'>
+                            <h4>Generation Settings</h4>
+                            <table class='task-details-table'>
+                                <tr><td>Size</td><td>${width} × ${height}</td></tr>
+                                <tr><td>Steps</td><td>${steps}</td></tr>
+                                <tr><td>CFG Scale</td><td>${params.cfg_scale || 7}</td></tr>
+                                <tr><td>Sampler</td><td>${params.sampler_name || 'Euler'}</td></tr>
+                                <tr><td>Scheduler</td><td>${params.scheduler || 'automatic'}</td></tr>
+                                <tr><td>Seed</td><td>${params.seed || -1}</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+
+        } catch (error) {
+            console.error('[TaskScheduler] Error loading bookmark details:', error);
+            showNotification('Error loading bookmark details', 'error');
+        }
+    }
 
     // Render queue status HTML
     function renderQueueStatus(status) {
@@ -1616,6 +1875,177 @@
         }
     }
 
+    // Setup context menu for Queue buttons
+    function setupQueueContextMenu() {
+        const queueButtons = [
+            { id: 'txt2img_queue', tab: 'txt2img' },
+            { id: 'img2img_queue', tab: 'img2img' }
+        ];
+
+        queueButtons.forEach(({ id, tab }) => {
+            const button = document.getElementById(id);
+            if (!button || button.dataset.tsContextMenu) return;
+
+            button.dataset.tsContextMenu = 'true';
+
+            button.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+
+                // Remove any existing context menu
+                const existing = document.querySelector('.ts-context-menu');
+                if (existing) existing.remove();
+
+                // Create context menu
+                const menu = document.createElement('div');
+                menu.className = 'ts-context-menu';
+                menu.innerHTML = `
+                    <div class='ts-context-menu-item' data-action='bookmark'>
+                        <span class='ts-context-menu-icon'>⭐</span>
+                        <span>Save as Bookmark</span>
+                    </div>
+                `;
+
+                // Position menu at click location
+                menu.style.left = e.pageX + 'px';
+                menu.style.top = e.pageY + 'px';
+                document.body.appendChild(menu);
+
+                // Handle menu item click
+                menu.querySelector('[data-action="bookmark"]').addEventListener('click', async () => {
+                    menu.remove();
+
+                    // Show name input modal
+                    showBookmarkNameModal(tab);
+                });
+
+                // Close menu on click outside
+                const closeMenu = (evt) => {
+                    if (!menu.contains(evt.target)) {
+                        menu.remove();
+                        document.removeEventListener('click', closeMenu);
+                    }
+                };
+                setTimeout(() => document.addEventListener('click', closeMenu), 0);
+            });
+        });
+
+        // Retry if buttons not found
+        const allFound = queueButtons.every(({ id }) => document.getElementById(id)?.dataset.tsContextMenu);
+        if (!allFound) {
+            setTimeout(setupQueueContextMenu, 1000);
+        }
+    }
+
+    // Show modal to enter bookmark name
+    function showBookmarkNameModal(tab) {
+        // Remove existing modal if any
+        const existing = document.querySelector('.ts-bookmark-name-modal');
+        if (existing) existing.remove();
+
+        const modal = document.createElement('div');
+        modal.className = 'ts-bookmark-name-modal ts-confirm-modal-overlay';
+        modal.innerHTML = `
+            <div class='ts-confirm-modal'>
+                <div class='ts-confirm-modal-header'>
+                    <span class='ts-confirm-modal-icon'>⭐</span>
+                    <h3>Save Bookmark</h3>
+                </div>
+                <div class='ts-confirm-modal-body'>
+                    <p>Enter a name for this bookmark:</p>
+                    <input type='text' class='ts-bookmark-name-input' placeholder='My Bookmark' autofocus>
+                    <p style='margin-top: 12px; font-size: 0.9em; color: var(--body-text-color-subdued);'>
+                        This will capture current ${tab} settings and save them as a bookmark.
+                    </p>
+                </div>
+                <div class='ts-confirm-modal-actions'>
+                    <button class='ts-confirm-btn ts-confirm-btn-confirm ts-bookmark-save'>Save</button>
+                    <button class='ts-confirm-btn ts-confirm-btn-cancel ts-bookmark-cancel'>Cancel</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const input = modal.querySelector('.ts-bookmark-name-input');
+        const saveBtn = modal.querySelector('.ts-bookmark-save');
+        const cancelBtn = modal.querySelector('.ts-bookmark-cancel');
+
+        input.focus();
+
+        const closeModal = () => modal.remove();
+
+        saveBtn.addEventListener('click', async () => {
+            const name = input.value.trim() || 'Untitled';
+            closeModal();
+            await createBookmark(tab, name);
+        });
+
+        cancelBtn.addEventListener('click', closeModal);
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                saveBtn.click();
+            } else if (e.key === 'Escape') {
+                closeModal();
+            }
+        });
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeModal();
+        });
+    }
+
+    // Create a bookmark by triggering intercept and saving
+    async function createBookmark(tab, name) {
+        try {
+            showNotification('Capturing settings...', 'info');
+
+            // Set intercept mode
+            const interceptResponse = await fetch(`/task-scheduler/intercept/${tab}`, {
+                method: 'POST'
+            });
+            const interceptData = await interceptResponse.json();
+
+            if (!interceptData.success) {
+                showNotification('Failed to start capture: ' + (interceptData.error || 'Unknown error'), 'error');
+                return;
+            }
+
+            // Click the Generate button to trigger capture
+            const generateBtnId = tab === 'img2img' ? 'img2img_generate' : 'txt2img_generate';
+            const generateBtn = document.getElementById(generateBtnId);
+
+            if (!generateBtn) {
+                showNotification('Generate button not found', 'error');
+                return;
+            }
+
+            generateBtn.click();
+
+            // Wait for intercept to capture
+            await new Promise(resolve => setTimeout(resolve, 1500));
+
+            // Create the bookmark from captured data
+            const bookmarkResponse = await fetch(`/task-scheduler/bookmarks?name=${encodeURIComponent(name)}`, {
+                method: 'POST'
+            });
+            const bookmarkData = await bookmarkResponse.json();
+
+            if (bookmarkData.success) {
+                showNotification(`Bookmark "${name}" saved!`, 'success');
+                await fetchBookmarks();
+                // Switch to bookmarks tab
+                window.switchTaskTab('bookmarks');
+            } else {
+                showNotification('Failed to save bookmark: ' + (bookmarkData.error || 'Unknown error'), 'error');
+            }
+
+        } catch (error) {
+            console.error('[TaskScheduler] Error creating bookmark:', error);
+            showNotification('Error creating bookmark', 'error');
+        }
+    }
+
     // Initialize
     function init() {
         console.log('[TaskScheduler] Initializing JavaScript (Queue buttons created via Gradio)...');
@@ -1627,6 +2057,12 @@
 
         // Start auto-refresh for task list
         startAutoRefresh();
+
+        // Setup context menu for Queue buttons
+        setupQueueContextMenu();
+
+        // Fetch initial bookmarks
+        fetchBookmarks();
 
         // Add CSS for modal and animations
         const style = document.createElement('style');
@@ -1731,6 +2167,87 @@
             .ts-coming-soon p {
                 margin: 0;
                 color: var(--body-text-color-subdued, #9ca3af);
+            }
+            /* Context Menu */
+            .ts-context-menu {
+                position: absolute;
+                z-index: 10003;
+                background: var(--block-background-fill, #1f2937);
+                border: 1px solid var(--border-color-primary, #374151);
+                border-radius: 8px;
+                box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+                min-width: 180px;
+                overflow: hidden;
+            }
+            .ts-context-menu-item {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 12px 16px;
+                cursor: pointer;
+                color: var(--body-text-color, #fff);
+                transition: background 0.15s ease;
+            }
+            .ts-context-menu-item:hover {
+                background: rgba(33, 150, 243, 0.2);
+            }
+            .ts-context-menu-icon {
+                font-size: 1.1em;
+            }
+            /* Bookmark Name Input */
+            .ts-bookmark-name-input {
+                width: 100%;
+                padding: 10px 12px;
+                border: 1px solid var(--border-color-primary, #374151);
+                border-radius: 6px;
+                background: var(--input-background-fill, #111827);
+                color: var(--body-text-color, #fff);
+                font-size: 1em;
+                margin-top: 8px;
+            }
+            .ts-bookmark-name-input:focus {
+                outline: none;
+                border-color: #2196F3;
+            }
+            /* Bookmark Item Styling */
+            .bookmark-item {
+                border-left: 4px solid #ffc107 !important;
+            }
+            .bookmark-item .task-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 4px;
+            }
+            .bookmark-item .bookmark-icon {
+                font-size: 1em;
+            }
+            .bookmark-item .bookmark-name {
+                font-weight: 600;
+                color: var(--body-text-color, #fff);
+            }
+            .bookmark-item .task-type {
+                font-size: 0.75em;
+                padding: 2px 6px;
+                background: rgba(255, 193, 7, 0.2);
+                border-radius: 4px;
+                color: #ffc107;
+            }
+            .bookmark-item .task-size {
+                font-size: 0.8em;
+                color: var(--body-text-color-subdued, #9ca3af);
+            }
+            .bookmark-item .task-meta {
+                display: flex;
+                gap: 12px;
+                font-size: 0.85em;
+                color: var(--body-text-color-subdued, #9ca3af);
+            }
+            .bookmark-item .task-model {
+                max-width: 200px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }
             /* Responsive tabs */
             @media (max-width: 500px) {

@@ -4,7 +4,8 @@ SQLite database layer for task persistence.
 import sqlite3
 import os
 import threading
-from typing import List, Optional
+from datetime import datetime
+from typing import List, Optional, Dict, Any
 from pathlib import Path
 
 from .models import Task, TaskStatus
@@ -77,6 +78,25 @@ class TaskDatabase:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_tasks_status_priority
             ON tasks (status, priority, created_at)
+        """)
+
+        # Bookmarks table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS bookmarks (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                created_at TEXT,
+                params TEXT,
+                checkpoint TEXT,
+                script_args TEXT
+            )
+        """)
+
+        # Index for bookmark queries
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_bookmarks_created
+            ON bookmarks (created_at DESC)
         """)
 
         conn.commit()
@@ -416,6 +436,135 @@ class TaskDatabase:
         if hasattr(self._local, 'connection') and self._local.connection:
             self._local.connection.close()
             self._local.connection = None
+
+    # =========================================================================
+    # Bookmark Operations
+    # =========================================================================
+
+    def add_bookmark(self, bookmark_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Add a new bookmark.
+
+        Args:
+            bookmark_data: Dictionary with bookmark fields (id, name, task_type, params, checkpoint, script_args)
+
+        Returns:
+            The added bookmark data.
+        """
+        import uuid
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        if 'id' not in bookmark_data:
+            bookmark_data['id'] = str(uuid.uuid4())
+        if 'created_at' not in bookmark_data:
+            bookmark_data['created_at'] = datetime.now().isoformat()
+
+        columns = ", ".join(bookmark_data.keys())
+        placeholders = ", ".join("?" * len(bookmark_data))
+
+        with self._lock:
+            cursor.execute(
+                f"INSERT INTO bookmarks ({columns}) VALUES ({placeholders})",
+                list(bookmark_data.values())
+            )
+            conn.commit()
+
+        return bookmark_data
+
+    def get_bookmark(self, bookmark_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a bookmark by ID.
+
+        Args:
+            bookmark_id: The bookmark ID.
+
+        Returns:
+            The bookmark data, or None if not found.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM bookmarks WHERE id = ?", (bookmark_id,))
+        row = cursor.fetchone()
+
+        if row:
+            return dict(row)
+        return None
+
+    def get_all_bookmarks(self) -> List[Dict[str, Any]]:
+        """
+        Get all bookmarks, ordered by creation time (newest first).
+
+        Returns:
+            List of bookmark dictionaries.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM bookmarks
+            ORDER BY created_at DESC
+        """)
+
+        return [dict(row) for row in cursor.fetchall()]
+
+    def update_bookmark(self, bookmark_id: str, updates: Dict[str, Any]) -> bool:
+        """
+        Update a bookmark.
+
+        Args:
+            bookmark_id: The bookmark ID.
+            updates: Dictionary of fields to update.
+
+        Returns:
+            True if updated, False if not found.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates.keys())
+
+        with self._lock:
+            cursor.execute(
+                f"UPDATE bookmarks SET {set_clause} WHERE id = ?",
+                list(updates.values()) + [bookmark_id]
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_bookmark(self, bookmark_id: str) -> bool:
+        """
+        Delete a bookmark.
+
+        Args:
+            bookmark_id: The bookmark ID.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        with self._lock:
+            cursor.execute("DELETE FROM bookmarks WHERE id = ?", (bookmark_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_bookmark_count(self) -> int:
+        """
+        Get the total number of bookmarks.
+
+        Returns:
+            Number of bookmarks.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) as count FROM bookmarks")
+        row = cursor.fetchone()
+        return row['count'] if row else 0
 
 
 # Global database instance

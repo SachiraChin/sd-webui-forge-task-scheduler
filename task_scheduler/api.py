@@ -626,4 +626,250 @@ def setup_api(app: FastAPI):
                 "error": str(e)
             }, status_code=500)
 
+    # =========================================================================
+    # Bookmark Endpoints
+    # =========================================================================
+
+    @app.get("/task-scheduler/bookmarks")
+    async def get_bookmarks():
+        """Get all bookmarks."""
+        try:
+            from .db import get_database
+            import json
+
+            db = get_database()
+            bookmarks = db.get_all_bookmarks()
+
+            # Parse JSON fields for display
+            def process_bookmark(b):
+                result = dict(b)
+                # Parse params if it's a string
+                if isinstance(result.get('params'), str):
+                    try:
+                        result['params'] = json.loads(result['params'])
+                    except:
+                        pass
+                return result
+
+            return JSONResponse({
+                "success": True,
+                "bookmarks": [process_bookmark(b) for b in bookmarks],
+                "count": len(bookmarks)
+            })
+
+        except Exception as e:
+            traceback.print_exc()
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
+    @app.get("/task-scheduler/bookmarks/{bookmark_id}")
+    async def get_bookmark(bookmark_id: str):
+        """Get a specific bookmark by ID."""
+        try:
+            from .db import get_database
+            import json
+
+            db = get_database()
+            bookmark = db.get_bookmark(bookmark_id)
+
+            if not bookmark:
+                raise HTTPException(status_code=404, detail="Bookmark not found")
+
+            # Parse JSON fields
+            if isinstance(bookmark.get('params'), str):
+                try:
+                    bookmark['params'] = json.loads(bookmark['params'])
+                except:
+                    pass
+            if isinstance(bookmark.get('script_args'), str):
+                try:
+                    bookmark['script_args'] = json.loads(bookmark['script_args'])
+                except:
+                    pass
+
+            return JSONResponse({
+                "success": True,
+                "bookmark": bookmark
+            })
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            traceback.print_exc()
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
+    @app.post("/task-scheduler/bookmarks")
+    async def create_bookmark(name: str = "Untitled"):
+        """Create a bookmark from the current intercept data."""
+        try:
+            from .db import get_database
+            import json
+
+            # Get the last intercept result
+            _, get_result, clear_mode = get_intercept_functions()
+            if get_result is None:
+                return JSONResponse({
+                    "success": False,
+                    "error": "Intercept module not available"
+                }, status_code=500)
+
+            result = get_result()
+            if not result or result.get('status') != 'queued':
+                return JSONResponse({
+                    "success": False,
+                    "error": "No valid intercept data available. Use the Queue button first."
+                }, status_code=400)
+
+            # Extract data from the intercept result
+            task_data = result.get('task', {})
+
+            db = get_database()
+            bookmark_data = {
+                'name': name,
+                'task_type': task_data.get('task_type', 'txt2img'),
+                'params': json.dumps(task_data.get('params', {})),
+                'checkpoint': task_data.get('checkpoint', ''),
+                'script_args': json.dumps(task_data.get('script_args', []))
+            }
+
+            bookmark = db.add_bookmark(bookmark_data)
+
+            return JSONResponse({
+                "success": True,
+                "bookmark_id": bookmark['id'],
+                "message": f"Bookmark '{name}' created"
+            })
+
+        except Exception as e:
+            traceback.print_exc()
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
+    @app.post("/task-scheduler/bookmarks/from-task/{task_id}")
+    async def create_bookmark_from_task(task_id: str, name: str = ""):
+        """Create a bookmark from an existing task."""
+        try:
+            from .db import get_database
+            import json
+
+            queue_manager = get_queue_manager()
+            task = queue_manager.get_task(task_id)
+
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            db = get_database()
+            bookmark_name = name if name else f"Bookmark from {task.get_display_name()[:30]}"
+
+            bookmark_data = {
+                'name': bookmark_name,
+                'task_type': task.task_type.value,
+                'params': json.dumps(task.params),
+                'checkpoint': task.checkpoint or '',
+                'script_args': json.dumps(task.script_args)
+            }
+
+            bookmark = db.add_bookmark(bookmark_data)
+
+            return JSONResponse({
+                "success": True,
+                "bookmark_id": bookmark['id'],
+                "message": f"Bookmark '{bookmark_name}' created"
+            })
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            traceback.print_exc()
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
+    @app.put("/task-scheduler/bookmarks/{bookmark_id}")
+    async def update_bookmark(bookmark_id: str, name: str = None):
+        """Update a bookmark's name."""
+        try:
+            from .db import get_database
+
+            db = get_database()
+            bookmark = db.get_bookmark(bookmark_id)
+
+            if not bookmark:
+                raise HTTPException(status_code=404, detail="Bookmark not found")
+
+            updates = {}
+            if name is not None:
+                updates['name'] = name
+
+            if updates:
+                db.update_bookmark(bookmark_id, updates)
+
+            return JSONResponse({
+                "success": True,
+                "message": "Bookmark updated"
+            })
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            traceback.print_exc()
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
+    @app.delete("/task-scheduler/bookmarks/{bookmark_id}")
+    async def delete_bookmark(bookmark_id: str):
+        """Delete a bookmark."""
+        try:
+            from .db import get_database
+
+            db = get_database()
+            success = db.delete_bookmark(bookmark_id)
+
+            if not success:
+                raise HTTPException(status_code=404, detail="Bookmark not found")
+
+            return JSONResponse({
+                "success": True,
+                "message": "Bookmark deleted"
+            })
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            traceback.print_exc()
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
+    @app.get("/task-scheduler/bookmarks/count")
+    async def get_bookmark_count():
+        """Get the number of bookmarks."""
+        try:
+            from .db import get_database
+
+            db = get_database()
+            count = db.get_bookmark_count()
+
+            return JSONResponse({
+                "success": True,
+                "count": count
+            })
+
+        except Exception as e:
+            return JSONResponse({
+                "success": False,
+                "error": str(e)
+            }, status_code=500)
+
     print("[TaskScheduler] API endpoints registered")
