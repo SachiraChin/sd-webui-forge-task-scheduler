@@ -2049,7 +2049,7 @@
             const bookmarkData = await bookmarkResponse.json();
 
             if (bookmarkData.success) {
-                showNotification(`Bookmark "${name}" saved!`, 'success');
+                showNotification(bookmarkData.message || 'Bookmark saved!', 'success');
                 await fetchBookmarks();
                 // Switch to bookmarks tab
                 window.switchTaskTab('bookmarks');
