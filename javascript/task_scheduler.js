@@ -397,8 +397,6 @@
 
     // Update button enabled/disabled states via JavaScript
     function updateButtonStates(states) {
-        console.log('[TaskScheduler] Updating button states:', states);
-
         const buttonMap = {
             'start': 'task_queue_start_btn',
             'stop': 'task_queue_stop_btn',
@@ -411,14 +409,10 @@
             if (!btnId) continue;
 
             const container = document.getElementById(btnId);
-            if (!container) {
-                console.warn(`[TaskScheduler] Button container not found: ${btnId}`);
-                continue;
-            }
+            if (!container) continue;
 
             // Find the actual button element inside Gradio's wrapper
             const btn = container.querySelector('button') || container;
-            console.log(`[TaskScheduler] Button ${key}: container=${container.tagName}, btn=${btn.tagName}, enabled=${enabled}`);
 
             if (enabled) {
                 btn.removeAttribute('disabled');
