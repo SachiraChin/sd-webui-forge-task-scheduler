@@ -798,22 +798,29 @@
         if (action === 'info') {
             showTaskDetails(taskId);
         } else if (action === 'delete') {
-            if (confirm('Delete this task?')) {
-                fetch(`/task-scheduler/queue/${taskId}`, { method: 'DELETE' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        showNotification('Task deleted', 'success');
-                        refreshTaskList(true);
-                    } else {
-                        showNotification('Failed to delete task: ' + (data.error || 'Unknown error'), 'error');
-                    }
-                })
-                .catch(error => {
-                    console.error('[TaskScheduler] Error deleting task:', error);
-                    showNotification('Error deleting task', 'error');
-                });
-            }
+            showConfirmModal({
+                icon: '🗑️',
+                title: 'Delete Task',
+                message: 'Are you sure you want to delete this task?',
+                confirmText: 'Delete',
+                confirmClass: 'ts-confirm-btn-delete',
+                onConfirm: () => {
+                    fetch(`/task-scheduler/queue/${taskId}`, { method: 'DELETE' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showNotification('Task deleted', 'success');
+                            refreshTaskList(true);
+                        } else {
+                            showNotification('Failed to delete task: ' + (data.error || 'Unknown error'), 'error');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('[TaskScheduler] Error deleting task:', error);
+                        showNotification('Error deleting task', 'error');
+                    });
+                }
+            });
         } else if (action === 'retry') {
             fetch(`/task-scheduler/queue/${taskId}/retry`, { method: 'POST' })
             .then(response => response.json())
@@ -924,21 +931,8 @@
         }
     };
 
-    window.taskSchedulerBatchAction = async function(listType, action) {
-        const taskIds = Array.from(selectedTasks[listType]);
-
-        if (taskIds.length === 0) {
-            showNotification('No tasks selected', 'warning');
-            return;
-        }
-
-        // Confirm for delete action
-        if (action === 'delete') {
-            if (!confirm(`Delete ${taskIds.length} selected task(s)?`)) {
-                return;
-            }
-        }
-
+    // Helper function to execute batch action
+    async function executeBatchAction(listType, action, taskIds) {
         let successCount = 0;
         let errorCount = 0;
 
@@ -991,6 +985,33 @@
         selectionMode[listType] = false;
         selectedTasks[listType].clear();
         refreshTaskList(true);
+    }
+
+    window.taskSchedulerBatchAction = function(listType, action) {
+        const taskIds = Array.from(selectedTasks[listType]);
+
+        if (taskIds.length === 0) {
+            showNotification('No tasks selected', 'warning');
+            return;
+        }
+
+        // Confirm for delete action with styled modal
+        if (action === 'delete') {
+            showConfirmModal({
+                icon: '🗑️',
+                title: 'Delete Tasks',
+                message: `Are you sure you want to delete <strong>${taskIds.length}</strong> selected task(s)?`,
+                confirmText: 'Delete All',
+                confirmClass: 'ts-confirm-btn-delete',
+                onConfirm: () => {
+                    executeBatchAction(listType, action, taskIds);
+                }
+            });
+            return;
+        }
+
+        // For other actions, execute directly
+        executeBatchAction(listType, action, taskIds);
     };
 
     // Build generation info string from task params (PNG metadata format)
@@ -1419,6 +1440,81 @@
         document.addEventListener('keydown', escHandler);
     }
 
+    // Show generic confirmation modal
+    function showConfirmModal(options) {
+        const {
+            icon = '⚠️',
+            title = 'Confirm',
+            message = 'Are you sure?',
+            confirmText = 'Confirm',
+            confirmClass = 'ts-confirm-btn-confirm',
+            cancelText = 'Cancel',
+            onConfirm = () => {},
+            onCancel = () => {}
+        } = options;
+
+        // Remove existing modal if any
+        const existing = document.querySelector('.ts-confirm-modal-overlay');
+        if (existing) existing.remove();
+
+        const modalHtml = `
+            <div class="ts-confirm-modal-overlay">
+                <div class="ts-confirm-modal">
+                    <div class="ts-confirm-modal-header">
+                        <span class="ts-confirm-modal-icon">${icon}</span>
+                        <h3>${title}</h3>
+                    </div>
+                    <div class="ts-confirm-modal-body">
+                        <p>${message}</p>
+                    </div>
+                    <div class="ts-confirm-modal-actions">
+                        <button class="ts-confirm-btn ${confirmClass}">${confirmText}</button>
+                        <button class="ts-confirm-btn ts-confirm-btn-cancel">${cancelText}</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+        const overlay = document.querySelector('.ts-confirm-modal-overlay');
+        const confirmBtn = overlay.querySelector(`.${confirmClass}`);
+        const cancelBtn = overlay.querySelector('.ts-confirm-btn-cancel');
+
+        const closeModal = () => overlay.remove();
+
+        confirmBtn.addEventListener('click', () => {
+            closeModal();
+            onConfirm();
+        });
+
+        cancelBtn.addEventListener('click', () => {
+            closeModal();
+            onCancel();
+        });
+
+        // Close on overlay click
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                closeModal();
+                onCancel();
+            }
+        });
+
+        // Close on Escape
+        const escHandler = (e) => {
+            if (e.key === 'Escape') {
+                closeModal();
+                onCancel();
+                document.removeEventListener('keydown', escHandler);
+            }
+        };
+        document.addEventListener('keydown', escHandler);
+
+        // Focus confirm button
+        confirmBtn.focus();
+    }
+
     // Setup Generate button interceptors
     function setupGenerateInterceptors() {
         const buttons = [
@@ -1609,6 +1705,96 @@
                 color: #9E9E9E;
             }
             .ts-batch-btn-cancel:hover {
+                background: rgba(158, 158, 158, 0.35);
+            }
+            /* Generic Confirmation Modal */
+            .ts-confirm-modal-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.7);
+                z-index: 10002;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                animation: fadeIn 0.2s ease;
+            }
+            .ts-confirm-modal {
+                background: var(--background-fill-primary, #1f2937);
+                border-radius: 12px;
+                padding: 24px;
+                min-width: 320px;
+                max-width: 90%;
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+                animation: modalSlideIn 0.3s ease;
+            }
+            .ts-confirm-modal-header {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 16px;
+            }
+            .ts-confirm-modal-icon {
+                font-size: 2em;
+            }
+            .ts-confirm-modal-header h3 {
+                margin: 0;
+                font-size: 1.3em;
+                color: var(--body-text-color, #fff);
+            }
+            .ts-confirm-modal-body {
+                margin-bottom: 20px;
+                color: var(--body-text-color, #e5e7eb);
+            }
+            .ts-confirm-modal-body p {
+                margin: 8px 0;
+            }
+            .ts-confirm-modal-body strong {
+                color: #f59e0b;
+            }
+            .ts-confirm-modal-actions {
+                display: flex;
+                gap: 10px;
+                justify-content: flex-end;
+                flex-wrap: wrap;
+            }
+            .ts-confirm-btn {
+                padding: 10px 18px;
+                border-radius: 6px;
+                border: 1px solid transparent;
+                cursor: pointer;
+                font-size: 0.95em;
+                font-weight: 500;
+                transition: all 0.2s ease;
+            }
+            .ts-confirm-btn:focus {
+                outline: 2px solid rgba(33, 150, 243, 0.5);
+                outline-offset: 2px;
+            }
+            .ts-confirm-btn-confirm {
+                background: rgba(33, 150, 243, 0.2);
+                border-color: rgba(33, 150, 243, 0.5);
+                color: #2196F3;
+            }
+            .ts-confirm-btn-confirm:hover {
+                background: rgba(33, 150, 243, 0.35);
+            }
+            .ts-confirm-btn-delete {
+                background: rgba(244, 67, 54, 0.2);
+                border-color: rgba(244, 67, 54, 0.5);
+                color: #f44336;
+            }
+            .ts-confirm-btn-delete:hover {
+                background: rgba(244, 67, 54, 0.35);
+            }
+            .ts-confirm-btn-cancel {
+                background: rgba(158, 158, 158, 0.2);
+                border-color: rgba(158, 158, 158, 0.5);
+                color: #9E9E9E;
+            }
+            .ts-confirm-btn-cancel:hover {
                 background: rgba(158, 158, 158, 0.35);
             }
             /* Gradio Queue buttons styling */
