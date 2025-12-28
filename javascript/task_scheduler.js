@@ -1902,10 +1902,18 @@
 
             button.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
+                e.stopPropagation();
 
-                // Remove any existing context menu
+                // Remove any existing context menu and backdrop
                 const existing = document.querySelector('.ts-context-menu');
                 if (existing) existing.remove();
+                const existingBackdrop = document.querySelector('.ts-context-menu-backdrop');
+                if (existingBackdrop) existingBackdrop.remove();
+
+                // Create invisible backdrop to capture clicks
+                const backdrop = document.createElement('div');
+                backdrop.className = 'ts-context-menu-backdrop';
+                document.body.appendChild(backdrop);
 
                 // Create context menu
                 const menu = document.createElement('div');
@@ -1922,9 +1930,17 @@
                 menu.style.top = e.pageY + 'px';
                 document.body.appendChild(menu);
 
-                // Handle menu item click
-                menu.querySelector('[data-action="bookmark"]').addEventListener('click', async () => {
+                // Clean up function
+                const cleanup = () => {
                     menu.remove();
+                    backdrop.remove();
+                };
+
+                // Handle menu item click
+                menu.querySelector('[data-action="bookmark"]').addEventListener('click', async (evt) => {
+                    evt.preventDefault();
+                    evt.stopPropagation();
+                    cleanup();
 
                     // Check if name prompt is enabled
                     if (bookmarkPromptName) {
@@ -1935,14 +1951,21 @@
                     }
                 });
 
-                // Close menu on click outside
-                const closeMenu = (evt) => {
-                    if (!menu.contains(evt.target)) {
-                        menu.remove();
-                        document.removeEventListener('click', closeMenu);
-                    }
-                };
-                setTimeout(() => document.addEventListener('click', closeMenu), 0);
+                // Close menu on backdrop click
+                backdrop.addEventListener('click', (evt) => {
+                    evt.preventDefault();
+                    evt.stopPropagation();
+                    cleanup();
+                });
+                backdrop.addEventListener('mousedown', (evt) => {
+                    evt.preventDefault();
+                    evt.stopPropagation();
+                });
+                backdrop.addEventListener('contextmenu', (evt) => {
+                    evt.preventDefault();
+                    evt.stopPropagation();
+                    cleanup();
+                });
             });
         });
 
@@ -2185,16 +2208,28 @@
                 margin: 0;
                 color: var(--body-text-color-subdued, #9ca3af);
             }
+            /* Context Menu Backdrop - captures clicks outside menu */
+            .ts-context-menu-backdrop {
+                position: fixed !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                bottom: 0 !important;
+                z-index: 10002 !important;
+                background: transparent !important;
+            }
             /* Context Menu */
             .ts-context-menu {
-                position: absolute;
-                z-index: 10003;
-                background: var(--block-background-fill, #1f2937) !important;
-                border: 1px solid var(--border-color-primary, #374151) !important;
+                position: absolute !important;
+                z-index: 10003 !important;
+                background-color: #1f2937 !important;
+                background: #1f2937 !important;
+                border: 1px solid #374151 !important;
                 border-radius: 8px !important;
-                box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5) !important;
+                box-shadow: 0 10px 25px rgba(0, 0, 0, 0.7) !important;
                 min-width: 180px !important;
                 overflow: hidden !important;
+                opacity: 1 !important;
             }
             .ts-context-menu-item {
                 display: flex !important;
@@ -2202,16 +2237,25 @@
                 gap: 10px !important;
                 padding: 12px 16px !important;
                 cursor: pointer !important;
-                color: var(--body-text-color, #fff) !important;
-                background: var(--block-background-fill, #1f2937) !important;
-                transition: background 0.15s ease !important;
+                color: #ffffff !important;
+                background-color: #1f2937 !important;
+                background: #1f2937 !important;
+                transition: background-color 0.15s ease !important;
                 border: none !important;
+                margin: 0 !important;
+                opacity: 1 !important;
+                width: 100% !important;
+                box-sizing: border-box !important;
             }
             .ts-context-menu-item:hover {
-                background: rgba(255, 193, 7, 0.2) !important;
+                background-color: #3d4f5f !important;
+                background: #3d4f5f !important;
             }
             .ts-context-menu-icon {
-                font-size: 1.1em;
+                font-size: 1.1em !important;
+            }
+            .ts-context-menu-item span {
+                opacity: 1 !important;
             }
             /* Bookmark Name Input */
             .ts-bookmark-name-input {
