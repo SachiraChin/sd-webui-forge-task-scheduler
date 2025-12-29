@@ -175,7 +175,10 @@ def setup_queue_buttons(demo):
         // Trigger Generate button after a short delay
         setTimeout(() => {
             if (generateBtn) {
-                generateBtn.click();
+                // Use custom event to bypass large batch warning
+                const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+                event.fromScheduler = true;
+                generateBtn.dispatchEvent(event);
                 // Start polling for completion
                 setTimeout(checkStatus, 300);
             } else {

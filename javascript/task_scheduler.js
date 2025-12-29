@@ -1838,6 +1838,11 @@
             button.dataset.tsBatchIntercepted = 'true';
 
             button.addEventListener('click', (e) => {
+                // Skip if triggered by scheduler (queue button or bookmark creation)
+                if (e.fromScheduler) {
+                    return;
+                }
+
                 // Skip if bypassing
                 if (bypassLargeBatchWarning) {
                     bypassLargeBatchWarning = false;
@@ -2072,7 +2077,10 @@
                 return;
             }
 
-            generateBtn.click();
+            // Use custom event to bypass large batch warning
+            const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+            event.fromScheduler = true;
+            generateBtn.dispatchEvent(event);
 
             // Wait for intercept to capture
             await new Promise(resolve => setTimeout(resolve, 1500));
